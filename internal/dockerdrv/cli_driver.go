@@ -1,0 +1,191 @@
+package dockerdrv
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"os/exec"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// cmdFactory is the test seam for shelling out. Production uses
+// exec.CommandContext; tests inject a recording factory that captures args
+// without executing the real docker binary.
+type cmdFactory func(ctx context.Context, name string, args ...string) *exec.Cmd
+
+type cliDriver struct {
+	cmd cmdFactory
+}
+
+// NewCLIDriver returns the production driver that shells out to `docker`.
+func NewCLIDriver() Driver {
+	return &cliDriver{cmd: exec.CommandContext}
+}
+
+// newCLIDriverWithFactory is the test constructor.
+func newCLIDriverWithFactory(f cmdFactory) Driver {
+	return &cliDriver{cmd: f}
+}
+
+func (d *cliDriver) Build(ctx context.Context, req BuildRequest) (string, error) {
+	args := []string{"build", "-t", req.ImageRef, "-f", req.Dockerfile, req.SourceDir}
+	cmd := d.cmd(ctx, "docker", args...)
+	cmd.Stdout = req.Stdout
+	cmd.Stderr = req.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("docker build: %w", err)
+	}
+	return req.ImageRef, nil
+}
+
+func (d *cliDriver) Run(ctx context.Context, req RunRequest) (string, error) {
+	args := []string{
+		"run", "-d",
+		"--name", req.Name,
+		"--network", req.Network,
+		"--restart", req.Restart,
+	}
+	keys := make([]string, 0, len(req.Env))
+	for k := range req.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		args = append(args, "--env", k+"="+req.Env[k])
+	}
+	args = append(args, "--label", "decloud.service="+strings.TrimPrefix(req.Name, "decloud-"))
+	args = append(args, req.Image)
+
+	var stdout, stderr bytes.Buffer
+	cmd := d.cmd(ctx, "docker", args...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("docker run: %w; stderr=%q", err, stderr.String())
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+func (d *cliDriver) Stop(ctx context.Context, name string, grace time.Duration) error {
+	args := []string{"stop", "-t", strconv.Itoa(int(grace.Seconds())), name}
+	var stderr bytes.Buffer
+	cmd := d.cmd(ctx, "docker", args...)
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if isNotFound(stderr.String()) {
+			return ErrContainerNotFound
+		}
+		return fmt.Errorf("docker stop: %w; stderr=%q", err, stderr.String())
+	}
+	return nil
+}
+
+func (d *cliDriver) Start(ctx context.Context, name string) error {
+	var stderr bytes.Buffer
+	cmd := d.cmd(ctx, "docker", "start", name)
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if isNotFound(stderr.String()) {
+			return ErrContainerNotFound
+		}
+		return fmt.Errorf("docker start: %w; stderr=%q", err, stderr.String())
+	}
+	return nil
+}
+
+func (d *cliDriver) Remove(ctx context.Context, name string) error {
+	var stderr bytes.Buffer
+	cmd := d.cmd(ctx, "docker", "rm", name)
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if isNotFound(stderr.String()) {
+			return ErrContainerNotFound
+		}
+		return fmt.Errorf("docker rm: %w; stderr=%q", err, stderr.String())
+	}
+	return nil
+}
+
+func (d *cliDriver) Inspect(ctx context.Context, name string) (InspectResult, error) {
+	var stdout, stderr bytes.Buffer
+	cmd := d.cmd(ctx, "docker", "inspect", name, "--format", "{{.Id}} {{.State.Status}}")
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if isNotFound(stderr.String()) {
+			return InspectResult{State: "absent"}, nil
+		}
+		return InspectResult{}, fmt.Errorf("docker inspect: %w; stderr=%q", err, stderr.String())
+	}
+	parts := strings.Fields(strings.TrimSpace(stdout.String()))
+	if len(parts) < 2 {
+		return InspectResult{}, fmt.Errorf("docker inspect: unexpected output %q", stdout.String())
+	}
+	return InspectResult{ContainerID: parts[0], State: parts[1]}, nil
+}
+
+func (d *cliDriver) Logs(ctx context.Context, name string, opts LogsOptions) error {
+	args := []string{"logs"}
+	if opts.Follow {
+		args = append(args, "-f")
+	}
+	if opts.Tail > 0 {
+		args = append(args, "--tail", strconv.Itoa(opts.Tail))
+	}
+	args = append(args, name)
+	var stderr bytes.Buffer
+	cmd := d.cmd(ctx, "docker", args...)
+	if opts.Stdout != nil {
+		cmd.Stdout = opts.Stdout
+	}
+	if opts.Stderr != nil {
+		cmd.Stderr = io.MultiWriter(opts.Stderr, &stderr)
+	} else {
+		cmd.Stderr = &stderr
+	}
+	if err := cmd.Run(); err != nil {
+		if isNotFound(stderr.String()) {
+			return ErrContainerNotFound
+		}
+		return fmt.Errorf("docker logs: %w; stderr=%q", err, stderr.String())
+	}
+	return nil
+}
+
+func (d *cliDriver) NetworkEnsure(ctx context.Context, name string) error {
+	if err := d.cmd(ctx, "docker", "network", "inspect", name).Run(); err == nil {
+		return nil
+	}
+	if err := d.cmd(ctx, "docker", "network", "create", name).Run(); err != nil {
+		return fmt.Errorf("docker network create: %w", err)
+	}
+	return nil
+}
+
+func (d *cliDriver) ContainerIP(ctx context.Context, name string) (string, error) {
+	const formatArg = "{{ .NetworkSettings.Networks.decloud.IPAddress }}"
+	var stdout, stderr bytes.Buffer
+	cmd := d.cmd(ctx, "docker", "inspect", name, "--format", formatArg)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if isNotFound(stderr.String()) {
+			return "", ErrContainerNotFound
+		}
+		return "", fmt.Errorf("docker inspect ip: %w; stderr=%q", err, stderr.String())
+	}
+	ip := strings.TrimSpace(stdout.String())
+	if ip == "" {
+		return "", ErrNoBridgeIP
+	}
+	return ip, nil
+}
+
+func isNotFound(stderr string) bool {
+	s := strings.ToLower(stderr)
+	return strings.Contains(s, "no such container") || strings.Contains(s, "no such object")
+}
