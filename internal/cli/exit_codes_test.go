@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/alexander-fenster/decloud/internal/caddy"
 	"github.com/alexander-fenster/decloud/internal/deploy"
 	"github.com/alexander-fenster/decloud/internal/registry"
 	"github.com/stretchr/testify/assert"
@@ -31,6 +32,10 @@ func TestExitCodeFor_AllSentinels(t *testing.T) {
 		{"run", deploy.ErrRun, ExitRunFail},
 		{"readiness", deploy.ErrReadiness, ExitReadinessFail},
 		{"caddy", deploy.ErrCaddyReload, ExitCaddyReloadFail},
+		{"caddy-up", caddy.ErrCaddyUp, ExitRunFail},
+		{"caddy-up-wrapped", fmt.Errorf("oops: %w", caddy.ErrCaddyUp), ExitRunFail},
+		{"caddy-down", caddy.ErrCaddyDown, ExitRunFail},
+		{"caddy-down-wrapped", fmt.Errorf("oops: %w", caddy.ErrCaddyDown), ExitRunFail},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

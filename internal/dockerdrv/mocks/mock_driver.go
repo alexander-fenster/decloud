@@ -72,6 +72,34 @@ func (mr *MockDriverMockRecorder) ContainerIP(ctx, containerName any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ContainerIP", reflect.TypeOf((*MockDriver)(nil).ContainerIP), ctx, containerName)
 }
 
+// Exec mocks base method.
+func (m *MockDriver) Exec(ctx context.Context, opts dockerdrv.ExecOptions) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Exec", ctx, opts)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Exec indicates an expected call of Exec.
+func (mr *MockDriverMockRecorder) Exec(ctx, opts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Exec", reflect.TypeOf((*MockDriver)(nil).Exec), ctx, opts)
+}
+
+// ImagePull mocks base method.
+func (m *MockDriver) ImagePull(ctx context.Context, ref string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ImagePull", ctx, ref)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ImagePull indicates an expected call of ImagePull.
+func (mr *MockDriverMockRecorder) ImagePull(ctx, ref any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImagePull", reflect.TypeOf((*MockDriver)(nil).ImagePull), ctx, ref)
+}
+
 // Inspect mocks base method.
 func (m *MockDriver) Inspect(ctx context.Context, containerName string) (dockerdrv.InspectResult, error) {
 	m.ctrl.T.Helper()
@@ -142,6 +170,21 @@ func (m *MockDriver) Run(ctx context.Context, req dockerdrv.RunRequest) (string,
 func (mr *MockDriverMockRecorder) Run(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockDriver)(nil).Run), ctx, req)
+}
+
+// RunWithOptions mocks base method.
+func (m *MockDriver) RunWithOptions(ctx context.Context, opts dockerdrv.RunOptions) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RunWithOptions", ctx, opts)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RunWithOptions indicates an expected call of RunWithOptions.
+func (mr *MockDriverMockRecorder) RunWithOptions(ctx, opts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunWithOptions", reflect.TypeOf((*MockDriver)(nil).RunWithOptions), ctx, opts)
 }
 
 // Start mocks base method.

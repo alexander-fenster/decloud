@@ -1,15 +1,15 @@
 # Installation
 
-Server-side installation for Decloud M1. The target is a single Linux server (Ubuntu LTS or Debian assumed; other distros work where Docker and Caddy do, but the systemd snippets below assume systemd). Operator runs every step over SSH as root or via `sudo`.
+Server-side installation for Decloud M1. The target is a single Linux server (Ubuntu LTS or Debian assumed; other distros work where Docker does, but a few command snippets below assume systemd). Operator runs every step over SSH as root or via `sudo`.
 
-There is no `decloud` daemon in M1. The `decloud` binary is a one-shot CLI that the operator invokes ad hoc; it owns no background process, no listening port, and no host service unit. Container supervision is delegated to Docker via `--restart=unless-stopped`.
+There is no `decloud` daemon in M1. The `decloud` binary is a one-shot CLI that the operator invokes ad hoc; it owns no background process, no listening port, and no host service unit. Container supervision is delegated to Docker via `--restart=unless-stopped`. Caddy itself runs as a Decloud-managed Docker container (`decloud-caddy`) on the shared `decloud` network — see [§3](#3-bring-up-caddy).
 
 For day-to-day usage, see [`usage.md`](./usage.md).
 
 ## 1. Prerequisites
 
-- Linux host with systemd, root access, outbound HTTPS to package mirrors and Docker Hub.
-- DNS records for any public hostnames you intend to deploy must already point at the host so Caddy can complete ACME challenges.
+- Linux host with root access and outbound HTTPS to package mirrors and Docker Hub.
+- DNS records for any public hostnames you intend to deploy must already point at the host so Caddy can complete ACME challenges. AAAA records are fine — `decloud caddy up` publishes 80/443 on both IPv4 and IPv6.
 - Go toolchain on the host if you intend to `go install` the binary (otherwise build elsewhere and copy).
 
 ## 2. Install Docker
@@ -23,44 +23,75 @@ systemctl enable --now docker
 docker run --rm hello-world
 ```
 
-## 3. Install Caddy
+## 3. Bring up Caddy
 
-Follow the official Caddy install instructions: <https://caddyserver.com/docs/install>. After installing the package, you must give Caddy its own systemd unit pointing at the Decloud-managed Caddyfile. Do not enable the default `caddy.service` that ships with the package.
+Caddy runs as a Decloud-managed container named `decloud-caddy`, attached to the shared `decloud` Docker network. The container exists so Caddy can resolve service container names (`decloud-<service>`) via Docker's embedded DNS — a host-side Caddy cannot do that, and routing breaks on hosts with public IPv6 because the host resolver returns the host's own AAAA instead of the bridge IP.
 
-Create `/etc/systemd/system/caddy.service`:
-
-```ini
-[Unit]
-Description=Caddy
-Documentation=https://caddyserver.com/docs/
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-User=caddy
-Group=caddy
-ExecStart=/usr/bin/caddy run --environ --config /opt/decloud/config/caddy/Caddyfile --adapter caddyfile
-ExecReload=/usr/bin/caddy reload --config /opt/decloud/config/caddy/Caddyfile --adapter caddyfile
-TimeoutStopSec=5s
-LimitNOFILE=1048576
-PrivateTmp=true
-ProtectSystem=full
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Reload systemd and enable the unit, but do not start it yet:
+There is **no host Caddy package**, no systemd unit, and no `caddy run` invocation. Install order is: install the `decloud` binary first ([§5](#5-install-the-decloud-binary)), then run:
 
 ```sh
-systemctl daemon-reload
-systemctl enable caddy
+decloud caddy up
 ```
 
-Caddy will fail to start until the Caddyfile exists. The first `decloud deploy service` writes a stub Caddyfile, after which `systemctl start caddy` succeeds.
+`caddy up` is idempotent. It:
 
-The `caddy` binary must be on the operator's `PATH`. The deployer invokes `caddy validate` before every reload; if `which caddy` fails, deploys fail at exit code 60 (`ExitCaddyReloadFail`).
+1. Ensures the `decloud` Docker network exists.
+2. Writes a stub `Caddyfile` if one is missing.
+3. Pulls `caddy:2` and runs `decloud-caddy` with dual-stack publishing on `80/tcp`, `443/tcp`, and `443/udp` (HTTP/3 over QUIC), bind-mounting `/opt/decloud/config/caddy` read-only at `/etc/caddy`.
+4. Persists ACME state and runtime config in two named volumes: `decloud_caddy_data` (`/data` — issued certs and OCSP staples) and `decloud_caddy_config` (`/config`).
+
+Re-running `decloud caddy up` is safe: it logs `caddy already running` and exits 0.
+
+To take Caddy down:
+
+```sh
+decloud caddy down
+```
+
+Volumes are **not** deleted by `caddy down`. To wipe ACME state, `docker volume rm decloud_caddy_data decloud_caddy_config` after `caddy down`.
+
+### 3.1 Host firewall
+
+Open `80/tcp`, `443/tcp`, and `443/udp` (HTTP/3) on any host firewall (`ufw`, `firewalld`, cloud security group). Without UDP/443 the listener still works for HTTP/1.1 and HTTP/2, but mobile clients that negotiate HTTP/3 silently fall back and the symptom looks like "TLS works but my phone is slow."
+
+### 3.2 Migrating from the M1.0 host-Caddy install
+
+Earlier M1 builds installed Caddy as a host systemd unit. If you followed those instructions, do this in order before running `decloud caddy up`:
+
+```sh
+# Persistently disable the host Caddy. `disable --now` alone is not enough —
+# a package upgrade re-enables the unit. Use `mask` or fully remove the package.
+systemctl disable --now caddy && systemctl mask caddy
+# OR, to remove the package entirely:
+apt-get remove -y caddy
+```
+
+**Recommended migration: copy ACME state into the named volume.** This preserves your already-issued Let's Encrypt certificates. Do this unless you have only one or two hostnames.
+
+```sh
+docker volume create decloud_caddy_data
+docker run --rm \
+  -v /var/lib/caddy/.local/share/caddy:/from \
+  -v decloud_caddy_data:/to \
+  alpine sh -c 'cp -a /from/. /to/'
+decloud caddy up
+```
+
+If the host Caddy stored its data elsewhere (some packages put it under `/var/snap/caddy/common/.local/share/caddy` or `/etc/caddy/data`), substitute the correct source path. Verify with `find /var -name 'certificates' -type d` before copying.
+
+**Alternative: cold restart without copying state.** Acceptable only if you have one or two hostnames. Caddy will obtain fresh Let's Encrypt certificates on first request per hostname.
+
+```sh
+decloud caddy up
+```
+
+Be aware of Let's Encrypt rate limits — they bite when you migrate many hostnames at once:
+
+- **50 certificates per registered domain per week.** 30 services on subdomains of a single registered domain consume 30 of those 50.
+- **5 duplicate certificates per identical SAN set per week.**
+- The recovery window for the per-domain weekly cap is **7 days**. If you trip it, your TLS is broken until next week.
+
+When in doubt, copy the volume.
 
 ## 4. Create the `/opt/decloud/` tree
 
@@ -91,17 +122,9 @@ chmod 0755 /opt/decloud/logs
 
 To use a different root, set `DECLOUD_ROOT=/some/other/path` in the operator's environment or pass `--config-root` on every invocation. The default is `/opt/decloud`.
 
-## 5. Create the shared Docker network
+On RHEL-family hosts with SELinux enforcing, the bind mount of `/opt/decloud/config/caddy` into the Caddy container needs the right context: `chcon -Rt container_file_t /opt/decloud/config/caddy`. SELinux is not a tier-1 supported configuration in M1.
 
-Caddy and every service container join one shared bridge network so Caddy can reach upstreams by container name. Create it once:
-
-```sh
-docker network create decloud
-```
-
-The network name is the literal `decloud`. The default bridge driver is required — do not pass `--driver`. The readiness probe relies on host-to-container reachability over that bridge.
-
-## 6. Install the `decloud` binary
+## 5. Install the `decloud` binary
 
 Build with the Go toolchain and place the binary on `PATH`:
 
@@ -126,10 +149,70 @@ decloud --help
 
 The output must list `caddy`, `deploy`, `logs`, `restart`, `start`, `status`, `stop`, and `unregister` subcommands. There is no `decloud daemon`, no `decloud bootstrap`, and no `systemctl enable decloud` — M1 deliberately ships no host service for Decloud itself.
 
-## 7. License
+## 6. Bootstrap order and first deploy
+
+In order on a fresh host:
+
+```sh
+# 1. Create the /opt/decloud tree (§4).
+# 2. Install the binary (§5).
+# 3. Bring Caddy up:
+decloud caddy up
+
+# 4. Deploy your first service (see usage.md):
+decloud deploy service --name myservice --host myservice.example.com --port 8080 ./myservice
+```
+
+`decloud caddy up` writes the stub `Caddyfile` if one is missing, so the first deploy has something to regenerate against.
+
+## 7. Troubleshooting
+
+### Ports 80/443 already bound
+
+`decloud caddy up` fails with:
+
+```
+caddy: up failed: ports 80/443 already in use; if you ran the M1.0 install, run 'systemctl disable --now caddy && systemctl mask caddy' or 'apt-get remove -y caddy' to make the change persistent
+```
+
+Something else is listening on the public ports. Almost always a leftover host Caddy from the M1.0 install. The error already names the recovery commands; run one of:
+
+```sh
+systemctl disable --now caddy && systemctl mask caddy
+# OR
+apt-get remove -y caddy
+```
+
+`systemctl disable --now caddy` alone is **not** durable — package upgrades re-enable the unit. Use `mask` or fully remove the package.
+
+### IPv6 listener fails to bind
+
+`decloud caddy up` fails with stderr containing `listen tcp [::]:80: socket: address family not supported by protocol`. The raw `docker run` stderr is surfaced as-is; it typically reads similar to:
+
+```
+docker: Error response from daemon: ...listen tcp [::]:80: socket: address family not supported by protocol...
+```
+
+The kernel has IPv6 disabled (`net.ipv6.conf.all.disable_ipv6=1`). Re-enable IPv6, or accept that this host cannot serve IPv6 clients. M1 does not have a flag to opt out of dual-stack publishing.
+
+### Caddy can't reach an upstream
+
+If Caddy logs `dial tcp [<public IPv6>]:<port>: connect: connection refused` after a deploy, `decloud-caddy` is not on the `decloud` network. Verify with:
+
+```sh
+docker network inspect decloud
+```
+
+`decloud-caddy` and the service container must both appear under `Containers`. If Caddy is missing, run `decloud caddy down && decloud caddy up`.
+
+### Caddy is not routing after a deploy
+
+Exit 60 with text `service is registered and running but Caddy is not routing traffic; run 'decloud caddy up'` means the deploy wrote the registry and the container is healthy, but Caddy is down. Run `decloud caddy up`, then `decloud caddy reload` if the up command reports `caddy already running`.
+
+## 8. License
 
 This repository does not yet declare a license. If you intend to redistribute the binary or use it in a context that requires explicit license grant, ask the maintainer before doing so.
 
-## 8. Next steps
+## 9. Next steps
 
 Deploy your first service. See [`usage.md`](./usage.md).

@@ -9,6 +9,7 @@ Tactical reference for the Decloud codebase. Each file is a dense decision recor
 - `decisions/schema-versioning.md` — `pelletier/go-toml/v2` strict mode + `schema_version` integer; bump only on semantic breaks, never preemptively; M1/M3 both write version 1.
 - `decisions/m1-test-strategy.md` — M1 ships unit-tests-only per maintainer directive; Gomock for `Store`/`Capturer`/`Driver`/`Generator`/`Reloader`, real bash for `internal/envcap`, ten-item handoff receipt is the manual-CI bridge until GitHub Actions lands.
 - `decisions/no-magic-zero-modes.md` — `--port=0` rejected at validation, NOT treated as "worker mode"; M5 workers get a separate `deploy job` command. Why folding workload shapes into one command via magic values produces 200-line if-else trees.
+- `decisions/caddy-runs-in-container.md` — Caddy is `decloud-caddy` on the `decloud` Docker network, not a host systemd unit; why every host-side variant (host.docker.internal, --network host, /etc/hosts injection, resolvers 127.0.0.11, dnsmasq, sidecar) was rejected; dual-stack publishing, named-volume ACME state, deploy-failure recovery contract.
 
 ## Implementation patterns (reusable)
 
@@ -23,6 +24,16 @@ Tactical reference for the Decloud codebase. Each file is a dense decision recor
 
 - `envcap-portable-bash.md` — the macOS-bash-3.2-portable env.sh capture mechanism; why `compgen -e` + `${!name}` + `printf '\0'` and NOT GNU `env -0` (which silently no-ops on BSD env).
 - `container-naming.md` — `decloud-<name>` in M1, `decloud-<name>-<deploy-id>` from M4; the rename is an explicit M4 deliverable, route all naming through one helper.
+- `docker-bridge-dns.md` — `decloud-<x>` short names only resolve from inside the `decloud` user-defined bridge; host processes fall through to host resolver and dial the host's own AAAA. Class-of-bug that shipped as M1.0 Caddy. Also: when a tech plan corrects an architectural assumption, promote it to `_ai/decisions/` — corrections buried in tech plans don't get audited against new code.
+
+## Review discipline
+
+- `doc-grep-discipline.md` — when `_docs/*.md` shows a literal error string, `grep -F` it against the source. Two M1 doc-fab incidents (`install.md:173`, `:189`) both showed renderings that didn't match the wrap chain the code actually emitted. If the bytes are genuinely variable, frame them as variable — don't fabricate a clean example.
+- `stderr-substring-canary.md` — branching on a third-party tool's stderr is fundamentally brittle; the mitigation is a canary test that fails loudly when the upstream wording shifts. Match canonical strings only, co-locate detection with its single caller (not the driver), lock with sub-tests-per-substring + a negative branch assertion. Live example: `isPortsBoundErr` in `internal/caddy/manager.go`.
+
+## Cross-references for shapes worth borrowing
+
+- **`PortMap.HostBind` as a first-class field, not a string-formatting trick.** Dual-stack publishing (`0.0.0.0` + `[::]`) is six PortMap entries with explicit host-bind, NOT a `formatPortMap` that conditionally brackets IPv6. The formatter splices verbatim and the doc-comment forbids auto-bracketing. See `internal/dockerdrv/driver.go::PortMap` and `cli_driver.go::formatPortMap`, locked by `TestFormatPortMap_DoesNotAutoBracketIPv6`. Rationale lives in `decisions/caddy-runs-in-container.md`.
 
 ## Backlog
 
@@ -35,3 +46,5 @@ When a decision record points back at planning detail, the canonical source is t
 - `_tasks/2026-04-26-readme-implementation-planning/05-plan-v2.md` — Don's M1 plan.
 - `_tasks/2026-04-26-readme-implementation-planning/06-tech-plan-v2.md` — Joel's M1 tech plan.
 - `_tasks/2026-04-26-readme-implementation-planning/07-linus-review-v2.md` — Linus's approval, including borderline-but-not-blocker edge cases on env capture.
+- `_tasks/2026-04-27-caddy-container-connection-refused/005-don-plan-v2.md` — root-cause analysis (host Caddy can't resolve `decloud-<x>`) and the Caddy-in-container fix.
+- `_tasks/2026-04-27-caddy-container-connection-refused/004-linus-review.md` — enumeration of the seven rejected alternatives (`host.docker.internal`, `--network host`, `--network container:`, sidecar, `/etc/hosts` injection, `--resolvers 127.0.0.11`, host-local `dnsmasq`).

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/alexander-fenster/decloud/internal/caddy"
 	"github.com/alexander-fenster/decloud/internal/deploy"
 	"github.com/alexander-fenster/decloud/internal/envcap"
 	"github.com/alexander-fenster/decloud/internal/registry"
@@ -54,6 +55,8 @@ func ExitCodeFor(err error) int {
 		return ExitReadinessFail
 	case errors.Is(err, deploy.ErrCaddyReload):
 		return ExitCaddyReloadFail
+	case errors.Is(err, caddy.ErrCaddyUp), errors.Is(err, caddy.ErrCaddyDown):
+		return ExitRunFail
 	default:
 		if isCobraUsageError(err) {
 			return ExitUsageError

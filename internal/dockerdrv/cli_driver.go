@@ -189,3 +189,97 @@ func isNotFound(stderr string) bool {
 	s := strings.ToLower(stderr)
 	return strings.Contains(s, "no such container") || strings.Contains(s, "no such object")
 }
+
+func (d *cliDriver) ImagePull(ctx context.Context, ref string) error {
+	var stderr bytes.Buffer
+	cmd := d.cmd(ctx, "docker", "pull", ref)
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker pull %s: %w; stderr=%q", ref, err, stderr.String())
+	}
+	return nil
+}
+
+func (d *cliDriver) RunWithOptions(ctx context.Context, opts RunOptions) (string, error) {
+	args := []string{
+		"run", "-d",
+		"--name", opts.Name,
+		"--network", opts.Network,
+		"--restart", opts.Restart,
+	}
+	envKeys := make([]string, 0, len(opts.Env))
+	for k := range opts.Env {
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
+	for _, k := range envKeys {
+		args = append(args, "--env", k+"="+opts.Env[k])
+	}
+	labelKeys := make([]string, 0, len(opts.Labels))
+	for k := range opts.Labels {
+		labelKeys = append(labelKeys, k)
+	}
+	sort.Strings(labelKeys)
+	for _, k := range labelKeys {
+		args = append(args, "--label", k+"="+opts.Labels[k])
+	}
+	for _, p := range opts.Ports {
+		args = append(args, "-p", formatPortMap(p))
+	}
+	for _, v := range opts.Volumes {
+		args = append(args, "-v", formatVolume(v))
+	}
+	args = append(args, opts.Image)
+
+	var stdout, stderr bytes.Buffer
+	cmd := d.cmd(ctx, "docker", args...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("docker run: %w; stderr=%q", err, stderr.String())
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+func (d *cliDriver) Exec(ctx context.Context, opts ExecOptions) error {
+	args := append([]string{"exec", opts.Container}, opts.Cmd...)
+	var stderr bytes.Buffer
+	cmd := d.cmd(ctx, "docker", args...)
+	if opts.Stdout != nil {
+		cmd.Stdout = opts.Stdout
+	}
+	if opts.Stderr != nil {
+		cmd.Stderr = io.MultiWriter(opts.Stderr, &stderr)
+	} else {
+		cmd.Stderr = &stderr
+	}
+	if err := cmd.Run(); err != nil {
+		if isNotFound(stderr.String()) {
+			return ErrContainerNotFound
+		}
+		return fmt.Errorf("docker exec: %w; stderr=%q", err, stderr.String())
+	}
+	return nil
+}
+
+// formatPortMap renders <HostBind>:<HostPort>:<ContainerPort>/<Proto>. HostBind
+// is spliced literally — IPv6 callers MUST pass "[::]" already-bracketed.
+// Auto-bracketing here would double-bracket IPv6 and break IPv4.
+func formatPortMap(p PortMap) string {
+	proto := p.Proto
+	if proto == "" {
+		proto = "tcp"
+	}
+	if p.HostBind == "" {
+		return fmt.Sprintf("%d:%d/%s", p.HostPort, p.ContainerPort, proto)
+	}
+	return fmt.Sprintf("%s:%d:%d/%s", p.HostBind, p.HostPort, p.ContainerPort, proto)
+}
+
+func formatVolume(v VolumeMount) string {
+	s := v.Source + ":" + v.Target
+	if v.ReadOnly {
+		s += ":ro"
+	}
+	return s
+}

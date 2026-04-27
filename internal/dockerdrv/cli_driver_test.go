@@ -261,3 +261,261 @@ func TestCLIDriver_InspectAbsentContainerReturnsAbsentState(t *testing.T) {
 	assert.Equal(t, "absent", res.State)
 	assert.Equal(t, "", res.ContainerID)
 }
+
+// docker pull caddy:2
+func TestCLIDriver_ImagePullArgs(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	require.NoError(t, d.ImagePull(context.Background(), "caddy:2"))
+	require.Len(t, records, 1)
+	assert.Equal(t, "docker", records[0].Name)
+	assert.Equal(t, []string{"pull", "caddy:2"}, records[0].Args)
+}
+
+func TestCLIDriver_ImagePullPropagatesStderrOnFailure(t *testing.T) {
+	d := driverWith(scriptedFactory(&[]recordedCmd{},
+		`echo "manifest unknown" 1>&2; exit 1`))
+	err := d.ImagePull(context.Background(), "caddy:nope")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "manifest unknown")
+}
+
+// docker exec decloud-caddy caddy validate --config /etc/caddy/Caddyfile.tmp
+func TestCLIDriver_ExecArgsBasic(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	require.NoError(t, d.Exec(context.Background(), ExecOptions{
+		Container: "decloud-caddy",
+		Cmd:       []string{"caddy", "validate", "--config", "/etc/caddy/Caddyfile.tmp"},
+	}))
+	require.Len(t, records, 1)
+	assert.Equal(t, "docker", records[0].Name)
+	assert.Equal(t, []string{
+		"exec", "decloud-caddy",
+		"caddy", "validate", "--config", "/etc/caddy/Caddyfile.tmp",
+	}, records[0].Args)
+}
+
+func TestCLIDriver_ExecPropagatesContainerNotFound(t *testing.T) {
+	d := driverWith(scriptedFactory(&[]recordedCmd{},
+		`echo "Error: No such container: decloud-caddy" 1>&2; exit 1`))
+	err := d.Exec(context.Background(), ExecOptions{
+		Container: "decloud-caddy",
+		Cmd:       []string{"caddy", "reload"},
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrContainerNotFound))
+}
+
+func TestCLIDriver_ExecPropagatesGenericError(t *testing.T) {
+	d := driverWith(scriptedFactory(&[]recordedCmd{},
+		`echo "validate: bad caddyfile" 1>&2; exit 1`))
+	err := d.Exec(context.Background(), ExecOptions{
+		Container: "decloud-caddy",
+		Cmd:       []string{"caddy", "validate"},
+	})
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrContainerNotFound))
+	assert.Contains(t, err.Error(), "bad caddyfile")
+}
+
+// docker run -d --name decloud-caddy --network decloud --restart unless-stopped \
+//
+//	--label decloud.managed=caddy \
+//	-p 0.0.0.0:80:80/tcp -p [::]:80:80/tcp \
+//	-p 0.0.0.0:443:443/tcp -p [::]:443:443/tcp \
+//	-p 0.0.0.0:443:443/udp -p [::]:443:443/udp \
+//	-v /opt/decloud/config/caddy:/etc/caddy:ro \
+//	-v decloud_caddy_data:/data \
+//	-v decloud_caddy_config:/config \
+//	caddy:2
+func TestCLIDriver_RunWithOptionsCaddyShape(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.RunWithOptions(context.Background(), caddyRunOptionsFixture())
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, []string{
+		"run", "-d",
+		"--name", "decloud-caddy",
+		"--network", "decloud",
+		"--restart", "unless-stopped",
+		"--label", "decloud.managed=caddy",
+		"-p", "0.0.0.0:80:80/tcp",
+		"-p", "[::]:80:80/tcp",
+		"-p", "0.0.0.0:443:443/tcp",
+		"-p", "[::]:443:443/tcp",
+		"-p", "0.0.0.0:443:443/udp",
+		"-p", "[::]:443:443/udp",
+		"-v", "/opt/decloud/config/caddy:/etc/caddy:ro",
+		"-v", "decloud_caddy_data:/data",
+		"-v", "decloud_caddy_config:/config",
+		"caddy:2",
+	}, records[0].Args)
+}
+
+func TestCLIDriver_RunWithOptionsDualStackPorts(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.RunWithOptions(context.Background(), RunOptions{
+		Name:    "x",
+		Image:   "img",
+		Network: "decloud",
+		Restart: "no",
+		Ports: []PortMap{
+			{HostBind: "0.0.0.0", HostPort: 1234, ContainerPort: 5678, Proto: "tcp"},
+			{HostBind: "[::]", HostPort: 1234, ContainerPort: 5678, Proto: "tcp"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, portFlagsFromArgs(records[0].Args),
+		[]string{"0.0.0.0:1234:5678/tcp", "[::]:1234:5678/tcp"})
+}
+
+func TestCLIDriver_RunWithOptionsBindReadOnly(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.RunWithOptions(context.Background(), RunOptions{
+		Name: "x", Image: "img", Network: "n", Restart: "no",
+		Volumes: []VolumeMount{
+			{Source: "/host", Target: "/dst", ReadOnly: true, IsNamed: false},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, volumeFlagsFromArgs(records[0].Args), []string{"/host:/dst:ro"})
+}
+
+func TestCLIDriver_RunWithOptionsNamedVolumeNotReadOnly(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.RunWithOptions(context.Background(), RunOptions{
+		Name: "x", Image: "img", Network: "n", Restart: "no",
+		Volumes: []VolumeMount{
+			{Source: "vol", Target: "/dst", ReadOnly: false, IsNamed: true},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, volumeFlagsFromArgs(records[0].Args), []string{"vol:/dst"})
+}
+
+func TestCLIDriver_RunWithOptionsLabelsSorted(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.RunWithOptions(context.Background(), RunOptions{
+		Name: "x", Image: "img", Network: "n", Restart: "no",
+		Labels: map[string]string{"b": "2", "a": "1"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, labelFlagsFromArgs(records[0].Args), []string{"a=1", "b=2"})
+}
+
+func TestCLIDriver_RunWithOptionsPortsDeclaredOrder(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.RunWithOptions(context.Background(), RunOptions{
+		Name: "x", Image: "img", Network: "n", Restart: "no",
+		Ports: []PortMap{
+			{HostBind: "0.0.0.0", HostPort: 443, ContainerPort: 443, Proto: "tcp"},
+			{HostBind: "0.0.0.0", HostPort: 80, ContainerPort: 80, Proto: "tcp"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, portFlagsFromArgs(records[0].Args),
+		[]string{"0.0.0.0:443:443/tcp", "0.0.0.0:80:80/tcp"})
+}
+
+func TestCLIDriver_RunWithOptionsPortDefaultProto(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.RunWithOptions(context.Background(), RunOptions{
+		Name: "x", Image: "img", Network: "n", Restart: "no",
+		Ports: []PortMap{
+			{HostBind: "0.0.0.0", HostPort: 80, ContainerPort: 80},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, portFlagsFromArgs(records[0].Args), []string{"0.0.0.0:80:80/tcp"})
+}
+
+func TestCLIDriver_RunWithOptionsEmptyHostBind(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.RunWithOptions(context.Background(), RunOptions{
+		Name: "x", Image: "img", Network: "n", Restart: "no",
+		Ports: []PortMap{
+			{HostBind: "", HostPort: 80, ContainerPort: 80, Proto: "tcp"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, portFlagsFromArgs(records[0].Args), []string{"80:80/tcp"})
+}
+
+func TestFormatPortMap_DoesNotAutoBracketIPv6(t *testing.T) {
+	assert.Equal(t, "[::]:80:80/tcp", formatPortMap(PortMap{
+		HostBind: "[::]", HostPort: 80, ContainerPort: 80, Proto: "tcp",
+	}))
+	assert.Equal(t, "0.0.0.0:80:80/tcp", formatPortMap(PortMap{
+		HostBind: "0.0.0.0", HostPort: 80, ContainerPort: 80, Proto: "tcp",
+	}))
+}
+
+func TestFormatPortMap_EmptyHostBindOmitsBindSegment(t *testing.T) {
+	assert.Equal(t, "80:80/tcp", formatPortMap(PortMap{
+		HostPort: 80, ContainerPort: 80, Proto: "tcp",
+	}))
+}
+
+func caddyRunOptionsFixture() RunOptions {
+	return RunOptions{
+		Name:    "decloud-caddy",
+		Image:   "caddy:2",
+		Network: "decloud",
+		Restart: "unless-stopped",
+		Labels:  map[string]string{"decloud.managed": "caddy"},
+		Ports: []PortMap{
+			{HostBind: "0.0.0.0", HostPort: 80, ContainerPort: 80, Proto: "tcp"},
+			{HostBind: "[::]", HostPort: 80, ContainerPort: 80, Proto: "tcp"},
+			{HostBind: "0.0.0.0", HostPort: 443, ContainerPort: 443, Proto: "tcp"},
+			{HostBind: "[::]", HostPort: 443, ContainerPort: 443, Proto: "tcp"},
+			{HostBind: "0.0.0.0", HostPort: 443, ContainerPort: 443, Proto: "udp"},
+			{HostBind: "[::]", HostPort: 443, ContainerPort: 443, Proto: "udp"},
+		},
+		Volumes: []VolumeMount{
+			{Source: "/opt/decloud/config/caddy", Target: "/etc/caddy", ReadOnly: true, IsNamed: false},
+			{Source: "decloud_caddy_data", Target: "/data", ReadOnly: false, IsNamed: true},
+			{Source: "decloud_caddy_config", Target: "/config", ReadOnly: false, IsNamed: true},
+		},
+	}
+}
+
+func portFlagsFromArgs(args []string) []string {
+	return flagValuesByName(args, "-p")
+}
+
+func volumeFlagsFromArgs(args []string) []string {
+	return flagValuesByName(args, "-v")
+}
+
+func labelFlagsFromArgs(args []string) []string {
+	return flagValuesByName(args, "--label")
+}
+
+func flagValuesByName(args []string, flag string) []string {
+	out := []string{}
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag {
+			out = append(out, args[i+1])
+		}
+	}
+	return out
+}

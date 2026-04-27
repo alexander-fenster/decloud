@@ -52,6 +52,16 @@ Five items punted out of M1 with explicit Don/Linus sign-off. Each was a non-blo
 
 **Originator:** Kevlin S-NEW-2 + Rob subtle-behavior #1, `019-kevlin-rereview.md`.
 
+## 6. Docker-compose-based smoke integration test for M1 deploy + Caddy ingress
+
+**Where:** No file yet. Likely lives at `internal/integration/` (new package) or `_test/integration/`. Test invokes `decloud caddy up`, `decloud deploy service` against a real Docker daemon (CI runner with Docker-in-Docker, or a tagged opt-in test that requires `DECLOUD_INTEGRATION=1`), asserts a real HTTP request through Caddy reaches a real upstream container.
+
+**Why deferred:** Per `_ai/decisions/m1-test-strategy.md`, M1 is unit-tests-only against the gomock'd `Driver`. The bridge-DNS resolution path is locked architecturally by the `decloud-caddy`-on-`decloud`-network design (`_ai/decisions/caddy-runs-in-container.md`); the only thing a real-Docker test catches that unit tests miss is "is our argv actually accepted by docker?", and the argv-shape tests in `internal/dockerdrv/cli_driver_test.go` lock that argv byte-for-byte. Deferred from the caddy-container-connection-refused task per `_ai/decisions/m1-test-strategy.md`.
+
+**Fix shape:** New `integration_test.go` build-tagged with `//go:build integration`, requires `DECLOUD_INTEGRATION=1` to run, brings up Caddy, deploys a one-line nginx service, curls through Caddy, asserts 200 OK with nginx body. Tear down both containers and the network on completion. Cleanup must be idempotent (test failures must not leave dangling containers). M2 material; M2 is also the milestone where reloader stderr `%q` quoting gets revisited, so the integration test naturally covers that improvement too.
+
+**Originator:** Joel §8.5 of `_tasks/2026-04-27-caddy-container-connection-refused/006-joel-tech-plan-v2.md`. Acknowledged by Don in `_tasks/2026-04-27-caddy-container-connection-refused/012-don-final-review.md` §5.1. Reaffirmed in `_tasks/2026-04-27-caddy-container-connection-refused/013-joel-tech-plan-cycle2.md` §5.
+
 ---
 
 ## Maintenance note

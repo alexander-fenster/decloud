@@ -28,6 +28,10 @@ var deployerFactory = buildProductionDeployer
 // lifecycleFactory mirrors deployerFactory; same parallel-safety constraint.
 var lifecycleFactory = buildProductionLifecycle
 
+// caddyManagerFactory mirrors deployerFactory/lifecycleFactory; same
+// parallel-safety constraint. Tests reassign during setup, restore in teardown.
+var caddyManagerFactory = buildProductionCaddyManager
+
 type deployServiceFlags struct {
 	Name             string
 	Hosts            []string
@@ -125,23 +129,32 @@ func resolveEnvFile(flagValue, sourceDir string) (string, error) {
 }
 
 func buildProductionDeployer(paths config.Paths) (deploy.ServiceDeployer, error) {
+	driver := dockerdrv.NewCLIDriver()
 	return deploy.NewServiceDeployer(deploy.Dependencies{
 		Paths:     paths,
 		Store:     registry.NewFSStore(paths),
 		Capturer:  envcap.New(),
-		Driver:    dockerdrv.NewCLIDriver(),
+		Driver:    driver,
 		Generator: caddy.NewGenerator(),
-		Reloader:  caddy.NewCLIReloader(),
+		Reloader:  caddy.NewCLIReloader(driver, paths.CaddyDir),
 	})
 }
 
 func buildProductionLifecycle(paths config.Paths) (deploy.Lifecycle, error) {
+	driver := dockerdrv.NewCLIDriver()
 	return deploy.NewLifecycle(deploy.Dependencies{
 		Paths:     paths,
 		Store:     registry.NewFSStore(paths),
 		Capturer:  envcap.New(),
-		Driver:    dockerdrv.NewCLIDriver(),
+		Driver:    driver,
 		Generator: caddy.NewGenerator(),
-		Reloader:  caddy.NewCLIReloader(),
+		Reloader:  caddy.NewCLIReloader(driver, paths.CaddyDir),
 	})
+}
+
+func buildProductionCaddyManager(paths config.Paths) (caddy.Manager, error) {
+	return caddy.NewCLIManager(caddy.ManagerConfig{
+		Driver: dockerdrv.NewCLIDriver(),
+		Paths:  paths,
+	}), nil
 }

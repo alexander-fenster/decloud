@@ -313,13 +313,13 @@ func (d *serviceDeployer) regenerateAndReload(ctx context.Context) error {
 	}
 	if err := d.deps.Reloader.Validate(ctx, tmpPath); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("%w: caddy validate failed: %w", ErrCaddyReload, err)
+		return fmt.Errorf("%w: caddy validate failed: %w; service is registered and running but Caddy is not routing traffic; run 'decloud caddy up' (and then 'decloud caddy reload' if needed) to restore routing", ErrCaddyReload, err)
 	}
 	if err := os.Rename(tmpPath, d.deps.Paths.CaddyfilePath); err != nil {
 		return fmt.Errorf("%w: rename caddyfile: %w", ErrCaddyReload, err)
 	}
 	if err := d.deps.Reloader.Reload(ctx, d.deps.Paths.CaddyfilePath); err != nil {
-		return fmt.Errorf("%w: caddy reload failed: %w", ErrCaddyReload, err)
+		return fmt.Errorf("%w: caddy reload failed: %w; service is registered and running but Caddy is not routing traffic; run 'decloud caddy up' (and then 'decloud caddy reload' if needed) to restore routing", ErrCaddyReload, err)
 	}
 	return nil
 }

@@ -1,0 +1,127 @@
+# 009 — Rob: implementation report
+
+Author: Rob Pike (implementation engineer agent)
+Date: 2026-04-27
+Status: EXECUTION step 3.2 complete. All tests pass; build green; vet/gofmt clean.
+
+## Summary
+
+Filled in the panicking stubs Kent wired in `008-kent-tests.md`. Production code now backs all 161 tests across `internal/dockerdrv`, `internal/caddy`, `internal/cli`, `internal/deploy` (the four packages this change touches). No tests modified; no test assertions changed.
+
+## Files modified
+
+### `internal/dockerdrv/cli_driver.go`
+
+Replaced the five panicking stubs with the real implementations per Joel v2 §4.6/§4.7/§4.8:
+
+- `ImagePull(ctx, ref)` — emits `docker pull <ref>`; wraps with stderr on failure.
+- `RunWithOptions(ctx, opts)` — emits `docker run -d --name --network --restart`, then `--env` (sorted by key), `--label` (sorted by key), `-p` (declared order), `-v` (declared order), then the image. Returns the trimmed container ID from stdout.
+- `Exec(ctx, opts)` — emits `docker exec <container> <cmd...>`; uses `io.MultiWriter` to fan stderr out to the caller's writer plus an internal buffer for `isNotFound` detection. Returns `ErrContainerNotFound` when the daemon's stderr matches.
+- `formatPortMap(p)` — returns `<HostBind>:<HostPort>:<ContainerPort>/<Proto>`. Honors Joel §9.9: HostBind is spliced literally so `[::]` flows through unchanged. Empty HostBind collapses to `<HostPort>:<ContainerPort>/<Proto>`. Empty Proto defaults to `tcp`.
+- `formatVolume(v)` — returns `<src>:<dst>[:ro]`. Source-shape disambiguates bind-mount vs. named-volume at the docker level, so `IsNamed` doesn't change the rendering — Kent's tests assert exactly that.
+
+### `internal/caddy/manager.go`
+
+Implemented the three `Manager` methods per Joel v2 §4.2/§4.3/§4.4:
+
+- `Up(ctx)` — five-step algorithm: `NetworkEnsure` → `WriteStubIfMissing` → `Inspect` → branch (`running` no-op, `exited` `Start`, `absent` `ImagePull`+`RunWithOptions`, anything else `ErrCaddyUp` with the unexpected state). No probe, no rollback. `runOpts()` returns the canonical six-port dual-stack `RunOptions` with the three volumes (`/etc/caddy:ro`, `decloud_caddy_data:/data`, `decloud_caddy_config:/config`).
+- `Down(ctx)` — `Stop(10s)` then `Remove`; both tolerant of `ErrContainerNotFound` (idempotent on absent container).
+- `IsRunning(ctx)` — `Inspect` → `State == "running"`.
+
+`NewCLIManager` now defaults `Stdout` to `os.Stdout` if the caller leaves it nil — production callers (`buildProductionCaddyManager` in `deploy_service.go`) do.
+
+### `internal/caddy/reloader.go`
+
+Rewrote the file per Joel v2 §4.5:
+
+- Added imports for `bytes`, `errors`, `fmt`, `path`, `path/filepath`, `strings`.
+- `cliReloader.execCaddy(ctx, sub, hostPath)` — translates the host path, invokes `Driver.Exec` with `["caddy", sub, "--config", ctrPath]`, always supplies a non-nil `bytes.Buffer` as `Stderr` (Kent's `TestReloader_StderrIsCapturedEvenWithoutCallerWriter` locks this contract). Maps `ErrContainerNotFound` and the `is not running` stderr signature to the actionable error.
+- `translatePath(hostPath)` — `filepath.Rel` against `hostCaddyDir`, rejects `..` and `..<sep>` prefixes, and runs the resulting relative segment through `filepath.ToSlash` before joining with `/etc/caddy/` so the container-side path is always Linux-style even if the host is Windows. The `..` test `TestReloader_PathTranslationParentEscape` passes.
+- `isNotRunningStderr` — case-insensitive substring match on `"is not running"`.
+
+`cmdFactory` is fully gone from this file — there was no field, type alias, or `newCLIReloaderWithFactory` to remove because Kent had already deleted the scaffolding.
+
+### `internal/cli/exit_codes.go`
+
+One-line addition to `ExitCodeFor`: a single `case` with `errors.Is(err, caddy.ErrCaddyUp), errors.Is(err, caddy.ErrCaddyDown)` returning `ExitRunFail`. No new constants; both sentinels share the `40` slot per Joel §1.5.
+
+### `internal/deploy/service.go`
+
+Updated the validate-leg and reload-leg wrap text in `regenerateAndReload` per Joel v2 §4.9. The `%w: %w` chain is preserved so `errors.Is(err, ErrCaddyReload)` and `errors.Is(err, innerErr)` continue to hold (locked by Kent's existing `TestDeploy_CaddyValidateFailureLeavesOldFileAndKeepsNewContainer`/`...DoesNotRollBackContainer` plus the two new `TestDeploy_Caddy*FailureMentionsCaddyUpRecovery`).
+
+## Files NOT modified
+
+Per Don §3.2 and Joel §2.3:
+
+- `internal/caddy/generator.go`, `stub.go` — generator output is correct under the new architecture.
+- `internal/deploy/lifecycle.go`, `readiness.go` — readiness already goes through bridge IP.
+- `internal/cli/deploy_service.go`, `caddy_up.go`, `caddy_down.go`, `root.go` — Kent had already wired the test seam, the Cobra commands, and the root-tree mount.
+- `internal/dockerdrv/driver.go` — Kent had already extended the interface and added the four new types.
+- `internal/dockerdrv/mocks/mock_driver.go`, `internal/caddy/mocks/mock_manager.go` — already regenerated by Kent.
+
+I did NOT edit any of Kent's tests. Nothing required pushing back on; every test was implementable as written.
+
+## Verification
+
+```
+$ go build ./...
+(clean)
+
+$ go vet ./...
+(clean)
+
+$ gofmt -l internal/
+(empty)
+
+$ go test ./... -count=1
+?   	github.com/alexander-fenster/decloud/cmd/decloud	[no test files]
+ok  	github.com/alexander-fenster/decloud/internal/caddy	0.014s
+?   	github.com/alexander-fenster/decloud/internal/caddy/mocks	[no test files]
+ok  	github.com/alexander-fenster/decloud/internal/cli	0.016s
+?   	github.com/alexander-fenster/decloud/internal/cli/mocks	[no test files]
+ok  	github.com/alexander-fenster/decloud/internal/config	0.008s
+ok  	github.com/alexander-fenster/decloud/internal/deploy	12.067s
+ok  	github.com/alexander-fenster/decloud/internal/dockerdrv	0.067s
+?   	github.com/alexander-fenster/decloud/internal/dockerdrv/mocks	[no test files]
+ok  	github.com/alexander-fenster/decloud/internal/envcap	0.102s
+?   	github.com/alexander-fenster/decloud/internal/envcap/mocks	[no test files]
+ok  	github.com/alexander-fenster/decloud/internal/ids	0.011s
+ok  	github.com/alexander-fenster/decloud/internal/logging	0.014s
+ok  	github.com/alexander-fenster/decloud/internal/registry	0.038s
+```
+
+All packages green. 161 PASS, 0 FAIL across the four packages this task touched (counted via `-v | grep -c PASS`).
+
+## Key implementation choices worth flagging for Kevlin/Linus
+
+1. **`translatePath` runs the relative path through `filepath.ToSlash` before joining with `/etc/caddy/`.** Joel §4.5 used `path.Join("/etc/caddy", rel)` directly. On Linux that's identical. On a Windows dev box `filepath.Rel` would emit backslashes that `path.Join` would not normalize, and the resulting container-side path would be wrong. Tests pass on Linux/macOS without `ToSlash`, but the explicit conversion is cheap insurance and matches what the tests are asserting (forward-slash container paths). If anyone disagrees, dropping the `ToSlash` is one-line.
+
+2. **`Exec` writes stderr both to the caller's writer (when supplied) and to an internal buffer**, via `io.MultiWriter`. This matches the existing `Logs` impl in the same file. The reloader doesn't actually pass a stderr writer to the driver — it only passes its own buffer — so the `MultiWriter` branch isn't currently exercised. Keeping it for parity with `Logs` and so future callers can fan stderr to their own writers without losing the not-found detection.
+
+3. **`Down` uses `errors.Is` rather than direct equality** for the `ErrContainerNotFound` check. The driver's `Stop`/`Remove` return the bare sentinel today, but using `errors.Is` future-proofs against a wrap.
+
+4. **No `caddyManagerFactory` or `caddy_up.go`/`caddy_down.go` edits** — Kent had wired the production factory `buildProductionCaddyManager` to construct `caddy.NewCLIManager` with the `Driver` and `Paths`, and the Cobra commands delegate through. Tests proved the wiring works once `Up`/`Down` returned non-nil.
+
+5. **`internal/caddy/manager.go` defaults `Stdout` to `os.Stdout`** when the caller passes nil. Joel §4.1 specified this; without it the production wiring (which doesn't set Stdout) would panic on the first `fmt.Fprintln` against a nil writer.
+
+## Pushback on Kent's work
+
+None. Every test was implementable as written. The slight contract strengthening Kent flagged in §216 of his report (`Stderr` always non-nil from the reloader side) is exactly what `execCaddy` does — `bytes.Buffer{}` is allocated unconditionally before the `Driver.Exec` call.
+
+## Summary of go test ./...
+
+```
+ok  	github.com/alexander-fenster/decloud/internal/caddy	0.014s
+ok  	github.com/alexander-fenster/decloud/internal/cli	0.016s
+ok  	github.com/alexander-fenster/decloud/internal/config	0.008s
+ok  	github.com/alexander-fenster/decloud/internal/deploy	12.067s
+ok  	github.com/alexander-fenster/decloud/internal/dockerdrv	0.067s
+ok  	github.com/alexander-fenster/decloud/internal/envcap	0.102s
+ok  	github.com/alexander-fenster/decloud/internal/ids	0.011s
+ok  	github.com/alexander-fenster/decloud/internal/logging	0.014s
+ok  	github.com/alexander-fenster/decloud/internal/registry	0.038s
+```
+
+All green. Task ready for Raymond (docs) and Kevlin/Linus (post-impl review).
+
+— Rob

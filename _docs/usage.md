@@ -10,6 +10,12 @@ A service is a directory containing a `Dockerfile` and, optionally, an `env.sh` 
 
 If you do not pass `--env-file`, Decloud looks for `<source-dir>/env.sh` and uses it if it exists; if it does not, the container runs with no captured environment. Passing `--env-file=<path>` to a missing file is a hard error (exit 10) — auto-discovery is silent, but explicit asks must succeed.
 
+Caddy must already be running before the first deploy. If you have not run `decloud caddy up` since installing, do that once now (see [`install.md` §3](./install.md#3-bring-up-caddy)):
+
+```sh
+decloud caddy up
+```
+
 A minimal example. Suppose `./myservice/` contains:
 
 ```Dockerfile
@@ -80,7 +86,7 @@ What the deploy actually does, in order:
 4. Run the new container on the `decloud` network.
 5. Wait for `GET <readiness-path>` to return `200 OK` from the host (probing the container's bridge IP directly; ports are not published to the host).
 6. Persist the service registration to `/opt/decloud/config/services/<name>.toml` and `/opt/decloud/secrets/<name>/env.toml`.
-7. Regenerate the Caddyfile, run `caddy validate` against a temporary file, atomically rename it into place, and ask Caddy to reload.
+7. Regenerate the Caddyfile, `docker exec decloud-caddy caddy validate` against a temporary file, atomically rename it into place, and `docker exec decloud-caddy caddy reload`. Requires `decloud caddy up` to have been run; if `decloud-caddy` is not running, the deploy exits 60 with a recovery hint pointing at `decloud caddy up`.
 
 If any step fails, the deploy aborts, surfaces a non-zero exit code, and does what it can to leave the system in a coherent state. `caddy validate` runs before the rename, so a syntactically broken Caddyfile cannot reach disk; the previous Caddyfile is preserved and Caddy keeps serving.
 
@@ -93,14 +99,14 @@ If any step fails, the deploy aborts, surfaces a non-zero exit code, and does wh
 | `10` | `ExitConfigError` | Registry rejection (unknown service, schema mismatch, bad file mode, missing secrets, `--mount` used, `--strategy` other than `recreate`); explicit `--env-file=<path>` pointing at a missing or unreadable file; `decloud stop`, `start`, `restart`, or `logs` against a container that is not registered. |
 | `20` | `ExitEnvCaptureFail` | `env.sh` failed to source or capture (readonly conflict, syntax error, non-zero exit). |
 | `30` | `ExitBuildFail` | `docker build` failed. |
-| `40` | `ExitRunFail` | A docker driver call failed: `docker run`, `docker start`, `docker inspect`, `docker logs`, or `docker network create` (the deployer ensures the `decloud` network on every deploy). `docker stop` against a non-existent container surfaces as exit 10, not 40. |
+| `40` | `ExitRunFail` | A docker driver call failed: `docker run`, `docker start`, `docker inspect`, `docker logs`, `docker network create`, or any failure from `decloud caddy up` / `decloud caddy down`. `docker stop` against a non-existent container surfaces as exit 10, not 40. |
 | `50` | `ExitReadinessFail` | The new container did not return `200 OK` within `--readiness-timeout`. |
-| `60` | `ExitCaddyReloadFail` | `caddy validate` rejected the generated Caddyfile, or `caddy reload` failed at runtime. |
+| `60` | `ExitCaddyReloadFail` | `caddy validate` rejected the generated Caddyfile, `caddy reload` failed at runtime, or `decloud-caddy` is not running (run `decloud caddy up`). |
 | `70` | `ExitInternal` | Anything else (unwrapped I/O error, panic-recovered error). |
 
 ## 4. Lifecycle commands
 
-All seven ship in M1. Each takes `--config-root` as the only persistent flag.
+All M1 commands listed below. Each takes `--config-root` as the only persistent flag.
 
 - `decloud unregister <name>` — full removal. Stops and removes the container (idempotent — it is fine if the container is already gone), deletes both registry files, regenerates and reloads the Caddyfile so the service's routes disappear.
 - `decloud start <name>` — start a previously deployed service. If the container is `running`, no-op. If `exited`, runs `docker start`. If gone (`absent`), re-runs the container from the previously deployed image and the saved environment. `start` does not rebuild — that is `deploy service`'s job. If the image is no longer in the local cache, `start` fails with exit 40.
@@ -108,7 +114,9 @@ All seven ship in M1. Each takes `--config-root` as the only persistent flag.
 - `decloud restart <name>` — stop, then start. Reuses the same container; does not rebuild. To recreate from source, run `deploy service` again.
 - `decloud status <name>` — runtime state plus registry view. Output is one line.
 - `decloud logs <name> [-f] [--tail N]` — pass-through to `docker logs`. `-f` follows; `--tail N` shows the last N lines (`0` means all).
-- `decloud caddy reload` — regenerate the Caddyfile from the registry, validate it, atomic-rename it into place, and tell Caddy to reload. Use this if you edited something out of band and need Caddy back in sync with the registry. **Warning:** this regenerates from registry state and discards any manual edits to `/opt/decloud/config/caddy/Caddyfile`. Edit the registry, not the Caddyfile.
+- `decloud caddy up` — bring up the `decloud-caddy` container on the shared `decloud` network with dual-stack publishing on `80/tcp`, `443/tcp`, `443/udp`. Idempotent: re-running while Caddy is already up logs `caddy already running` and exits 0. Pulls `caddy:2` on first run; uses named volumes `decloud_caddy_data` (ACME state, issued certs) and `decloud_caddy_config` (runtime config). Takes no flags — image and ports are fixed in M1. Run once after install; the container has `--restart=unless-stopped`, so reboots and Docker daemon restarts bring it back automatically.
+- `decloud caddy down` — stop and remove the `decloud-caddy` container with a 10-second grace period. The named volumes `decloud_caddy_data` and `decloud_caddy_config` are **not** removed — wipe them with `docker volume rm` if you need a clean ACME slate. Idempotent on an already-absent container.
+- `decloud caddy reload` — regenerate the Caddyfile from the registry, validate it inside the running `decloud-caddy` container via `docker exec caddy validate`, atomic-rename it into place, and `docker exec caddy reload`. Use this if you edited something out of band and need Caddy back in sync with the registry. Surface unchanged from M1.0; the implementation now `docker exec`s into the container instead of shelling a host `caddy` binary, so `decloud caddy up` must have been run first. **Warning:** this regenerates from registry state and discards any manual edits to `/opt/decloud/config/caddy/Caddyfile`. Edit the registry, not the Caddyfile.
 
 ### Status format
 
@@ -179,7 +187,7 @@ $ decloud unregister myservice
 
 ## 6. Debugging a container directly
 
-Decloud deliberately does not publish container ports to the host (`docker run -p ...` is never invoked). Caddy is the only public ingress, and it reaches each container by name over the shared `decloud` Docker network. The readiness probe reaches containers the same way, via their bridge IP.
+Decloud does not publish service container ports to the host. The only container that publishes ports is `decloud-caddy` itself — it binds `80/tcp`, `443/tcp`, and `443/udp` on both `0.0.0.0` and `[::]`. Every service container exposes its port only inside the shared `decloud` Docker network; Caddy reaches each upstream by container name (`decloud-<service>`) via Docker's embedded DNS. The readiness probe reaches containers the same way, via their bridge IP.
 
 If you need to probe a container directly from the host — for example, the readiness probe is failing and you want to bypass Caddy — use `docker exec`:
 
@@ -189,14 +197,30 @@ docker exec -it decloud-myservice sh
 wget -q -O- http://localhost:8080/healthz
 ```
 
-Substitute whichever HTTP client your image has (`curl`, `wget`, or whatever the language runtime ships). Do not modify the deploy to add `-p` host port mappings; the network model is part of M1 by design.
+Substitute whichever HTTP client your image has (`curl`, `wget`, or whatever the language runtime ships). Do not modify the deploy to add `-p` host port mappings on service containers; the network model is part of M1 by design.
 
 ## 7. Recovering from `caddy reload` failures (exit 60)
 
-The deploy validates the new Caddyfile with `caddy validate` before writing it to disk, so most reload failures fail fast with the previous Caddyfile and Caddy's running config both untouched. The error message names the temporary file path; investigate with `caddy validate --config <tmp-path>`.
+`caddy validate` and `caddy reload` both run as `docker exec` into the `decloud-caddy` container. The host path `/opt/decloud/config/caddy/Caddyfile` maps to `/etc/caddy/Caddyfile` inside the container via a read-only bind mount; the deploy translates host paths to container paths automatically.
 
-If validation passed but the actual `caddy reload` failed (rare — usually a runtime issue like a port already bound, certificate provisioning failure, or upstream DNS error), the new Caddyfile is on disk and reflects the new state, but Caddy is still serving the old config in memory. To recover:
+The deploy validates the new Caddyfile with `caddy validate` before renaming it into place, so most reload failures fail fast with the previous Caddyfile and Caddy's running config both untouched. The error message names the host-side temporary file path; investigate from inside the container:
 
-1. Read the Caddy error log (`journalctl -u caddy`).
+```sh
+docker exec decloud-caddy caddy validate --config /etc/caddy/Caddyfile.tmp
+```
+
+If validation passed but the actual `caddy reload` failed (rare — usually a runtime issue like a certificate provisioning failure or upstream DNS error), the new Caddyfile is on disk and reflects the new state, but Caddy is still serving the old config in memory. To recover:
+
+1. Read the Caddy error log (`docker logs decloud-caddy --tail 100`).
 2. If the failure is in a specific service's stanza, `decloud unregister <name>` removes that stanza and regenerates.
 3. Otherwise, fix the underlying issue and run `decloud caddy reload`.
+
+### `decloud-caddy` is not running
+
+If the deploy exits 60 with text `service is registered and running but Caddy is not routing traffic; run 'decloud caddy up'`, the deploy succeeded — the container is healthy and the registry is updated — but Caddy itself is down. The recovery is one command:
+
+```sh
+decloud caddy up
+```
+
+If `caddy up` reports `caddy already running` but routing is still broken, follow with `decloud caddy reload` to push the current registry state into the running Caddy.

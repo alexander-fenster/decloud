@@ -1,57 +1,148 @@
-package caddy
+package caddy_test
 
 import (
 	"context"
-	"os/exec"
-	"strings"
+	"errors"
+	"io"
 	"testing"
 
+	"github.com/alexander-fenster/decloud/internal/caddy"
+	"github.com/alexander-fenster/decloud/internal/dockerdrv"
+	dockermocks "github.com/alexander-fenster/decloud/internal/dockerdrv/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
-type recordedCmd struct {
-	Name string
-	Args []string
+const hostCaddyDir = "/opt/decloud/config/caddy"
+
+type reloaderHarness struct {
+	reloader caddy.Reloader
+	driver   *dockermocks.MockDriver
 }
 
-func recordingFactory(records *[]recordedCmd) cmdFactory {
-	return func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		*records = append(*records, recordedCmd{Name: name, Args: args})
-		return exec.CommandContext(ctx, "true")
+func newReloaderHarness(t *testing.T) *reloaderHarness {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	driver := dockermocks.NewMockDriver(ctrl)
+	return &reloaderHarness{
+		reloader: caddy.NewCLIReloader(driver, hostCaddyDir),
+		driver:   driver,
 	}
 }
 
-func failingFactory(stderr string) cmdFactory {
-	return func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		c := exec.CommandContext(ctx, "/bin/sh", "-c", "echo "+strings.ReplaceAll(stderr, " ", "_")+" 1>&2; exit 1")
-		return c
-	}
+type capturedExec struct {
+	opts dockerdrv.ExecOptions
 }
 
-func TestReloader_InvokesCaddyValidate(t *testing.T) {
-	var records []recordedCmd
-	r := newCLIReloaderWithFactory(recordingFactory(&records))
-
-	require.NoError(t, r.Validate(context.Background(), "/etc/caddy/Caddyfile"))
-	require.Len(t, records, 1)
-	assert.Equal(t, "caddy", records[0].Name)
-	assert.Equal(t, []string{"validate", "--config", "/etc/caddy/Caddyfile"}, records[0].Args)
+func captureExec(_ *testing.T, h *reloaderHarness, ret error, stderrText string) *capturedExec {
+	c := &capturedExec{}
+	h.driver.EXPECT().Exec(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts dockerdrv.ExecOptions) error {
+			c.opts = opts
+			if stderrText != "" && opts.Stderr != nil {
+				_, _ = io.WriteString(opts.Stderr, stderrText)
+			}
+			return ret
+		})
+	return c
 }
 
-func TestReloader_InvokesCaddyReload(t *testing.T) {
-	var records []recordedCmd
-	r := newCLIReloaderWithFactory(recordingFactory(&records))
+func TestReloader_ValidateCallsDockerExec(t *testing.T) {
+	h := newReloaderHarness(t)
+	c := captureExec(t, h, nil, "")
 
-	require.NoError(t, r.Reload(context.Background(), "/etc/caddy/Caddyfile"))
-	require.Len(t, records, 1)
-	assert.Equal(t, "caddy", records[0].Name)
-	assert.Equal(t, []string{"reload", "--config", "/etc/caddy/Caddyfile"}, records[0].Args)
+	require.NoError(t, h.reloader.Validate(context.Background(),
+		hostCaddyDir+"/Caddyfile.tmp"))
+	assert.Equal(t, caddy.ContainerName, c.opts.Container)
+	assert.Equal(t, []string{
+		"caddy", "validate", "--config", "/etc/caddy/Caddyfile.tmp",
+	}, c.opts.Cmd)
 }
 
-func TestReloader_ValidateFailureReturnsError(t *testing.T) {
-	r := newCLIReloaderWithFactory(failingFactory("bad_caddyfile_syntax"))
-	err := r.Validate(context.Background(), "/etc/caddy/Caddyfile")
+func TestReloader_ReloadCallsDockerExec(t *testing.T) {
+	h := newReloaderHarness(t)
+	c := captureExec(t, h, nil, "")
+
+	require.NoError(t, h.reloader.Reload(context.Background(),
+		hostCaddyDir+"/Caddyfile"))
+	assert.Equal(t, caddy.ContainerName, c.opts.Container)
+	assert.Equal(t, []string{
+		"caddy", "reload", "--config", "/etc/caddy/Caddyfile",
+	}, c.opts.Cmd)
+}
+
+func TestReloader_PathTranslationCanonicalForm(t *testing.T) {
+	h := newReloaderHarness(t)
+	c := captureExec(t, h, nil, "")
+
+	require.NoError(t, h.reloader.Validate(context.Background(),
+		hostCaddyDir+"/Caddyfile.tmp"))
+	assert.Equal(t, "/etc/caddy/Caddyfile.tmp", c.opts.Cmd[3])
+}
+
+func TestReloader_PathTranslationOutsideBindMount(t *testing.T) {
+	h := newReloaderHarness(t)
+	h.driver.EXPECT().Exec(gomock.Any(), gomock.Any()).Times(0)
+
+	err := h.reloader.Validate(context.Background(), "/tmp/foo")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "bad_caddyfile_syntax")
+	assert.Contains(t, err.Error(), "outside the bind-mount")
+}
+
+func TestReloader_PathTranslationParentEscape(t *testing.T) {
+	h := newReloaderHarness(t)
+	h.driver.EXPECT().Exec(gomock.Any(), gomock.Any()).Times(0)
+
+	err := h.reloader.Validate(context.Background(),
+		hostCaddyDir+"/../../etc/passwd")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "outside the bind-mount")
+}
+
+func TestReloader_ContainerNotRunningSurfacesActionableError(t *testing.T) {
+	h := newReloaderHarness(t)
+	captureExec(t, h, dockerdrv.ErrContainerNotFound, "")
+
+	err := h.reloader.Validate(context.Background(), hostCaddyDir+"/Caddyfile")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `container "decloud-caddy" is not running`)
+	assert.Contains(t, err.Error(), "decloud caddy up")
+}
+
+func TestReloader_ContainerExitedSurfacesActionableError(t *testing.T) {
+	h := newReloaderHarness(t)
+	captureExec(t, h, errors.New("exit status 1"),
+		"Error response from daemon: Container decloud-caddy is not running")
+
+	err := h.reloader.Validate(context.Background(), hostCaddyDir+"/Caddyfile")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `container "decloud-caddy" is not running`)
+	assert.Contains(t, err.Error(), "decloud caddy up")
+}
+
+func TestReloader_ValidateExitNonzeroPreservesStderr(t *testing.T) {
+	h := newReloaderHarness(t)
+	innerErr := errors.New("exit status 1")
+	captureExec(t, h, innerErr, "bad caddyfile syntax at line 5")
+
+	err := h.reloader.Validate(context.Background(), hostCaddyDir+"/Caddyfile")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, innerErr))
+	assert.Contains(t, err.Error(), "bad caddyfile syntax")
+}
+
+func TestReloader_StderrIsCapturedEvenWithoutCallerWriter(t *testing.T) {
+	h := newReloaderHarness(t)
+	h.driver.EXPECT().Exec(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, opts dockerdrv.ExecOptions) error {
+			require.NotNil(t, opts.Stderr,
+				"reloader must always supply a Stderr buffer for not-running detection")
+			_, _ = opts.Stderr.Write([]byte("dummy stderr"))
+			return errors.New("exit 1")
+		})
+
+	err := h.reloader.Validate(context.Background(), hostCaddyDir+"/Caddyfile")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "dummy stderr")
 }

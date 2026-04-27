@@ -38,6 +38,8 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(newLogsCmd(rc))
 
 	caddy := &cobra.Command{Use: "caddy", Short: "Caddy management"}
+	caddy.AddCommand(newCaddyUpCmd(rc))
+	caddy.AddCommand(newCaddyDownCmd(rc))
 	caddy.AddCommand(newCaddyReloadCmd(rc))
 	root.AddCommand(caddy)
 

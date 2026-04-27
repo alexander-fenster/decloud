@@ -362,6 +362,54 @@ func TestDeploy_CaddyReloadFailureDoesNotRollBackContainer(t *testing.T) {
 	assert.True(t, errors.Is(err, deploy.ErrCaddyReload))
 }
 
+func TestDeploy_CaddyValidateFailureMentionsCaddyUpRecovery(t *testing.T) {
+	h := newDeployerHarness(t)
+
+	h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
+	h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "foo").Return(nil, registry.ErrNotFound)
+	h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil)
+	h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).Return("cid", nil)
+	h.driver.EXPECT().ContainerIP(gomock.Any(), gomock.Any()).Return("172.18.0.5", nil)
+	h.store.EXPECT().Save(gomock.Any(), gomock.Any()).Return(nil)
+	h.store.EXPECT().List(gomock.Any()).Return(nil, nil)
+	h.generator.EXPECT().Generate(gomock.Any(), gomock.Any()).DoAndReturn(stubGenerate)
+	h.reloader.EXPECT().Validate(gomock.Any(), gomock.Any()).
+		Return(errors.New(`container "decloud-caddy" is not running; run 'decloud caddy up' first`))
+
+	err := h.deployer.Deploy(context.Background(), newRequest())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, deploy.ErrCaddyReload))
+	assert.Contains(t, err.Error(), "decloud caddy up")
+	assert.Contains(t, err.Error(), "registered")
+	assert.Contains(t, err.Error(), "Caddy is not routing")
+}
+
+func TestDeploy_CaddyReloadFailureMentionsCaddyUpRecovery(t *testing.T) {
+	h := newDeployerHarness(t)
+
+	h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
+	h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "foo").Return(nil, registry.ErrNotFound)
+	h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil)
+	h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).Return("cid", nil)
+	h.driver.EXPECT().ContainerIP(gomock.Any(), gomock.Any()).Return("172.18.0.5", nil)
+	h.store.EXPECT().Save(gomock.Any(), gomock.Any()).Return(nil)
+	h.store.EXPECT().List(gomock.Any()).Return(nil, nil)
+	h.generator.EXPECT().Generate(gomock.Any(), gomock.Any()).DoAndReturn(stubGenerate)
+	h.reloader.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil)
+	innerErr := errors.New(`container "decloud-caddy" is not running; run 'decloud caddy up' first`)
+	h.reloader.EXPECT().Reload(gomock.Any(), gomock.Any()).Return(innerErr)
+
+	err := h.deployer.Deploy(context.Background(), newRequest())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, deploy.ErrCaddyReload))
+	assert.True(t, errors.Is(err, innerErr))
+	assert.Contains(t, err.Error(), "decloud caddy up")
+	assert.Contains(t, err.Error(), "registered")
+	assert.Contains(t, err.Error(), "Caddy is not routing")
+}
+
 func TestDeploy_DeployIDIsStableThroughoutOneDeploy(t *testing.T) {
 	h := newDeployerHarness(t)
 	var buildImage, runImage string
