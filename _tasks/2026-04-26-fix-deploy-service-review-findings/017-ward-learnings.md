@@ -70,10 +70,10 @@ Both Kevlin and Linus flagged the line "Do not collapse to `Init(string) {}`" â€
 
 | Path | Status | Purpose |
 |---|---|---|
-| `/Users/fenster/dev/declouding/_ai/explicit-inputs-not-globals.md` | NEW | Why `Init(root string)` beats env-read; rejected alternatives |
-| `/Users/fenster/dev/declouding/_ai/decisions/no-magic-zero-modes.md` | NEW | M1 port=0 policy; M5 worker shape; magic-mode anti-pattern |
-| `/Users/fenster/dev/declouding/_ai/cli-flag-surface-coherence.md` | NEW | Four-surface drift class-of-bug + grep recipe |
-| `/Users/fenster/dev/declouding/_ai/MEMORY.md` | UPDATED | Index entries for the three new files |
+| `/Users/fenster/dev/decloud/_ai/explicit-inputs-not-globals.md` | NEW | Why `Init(root string)` beats env-read; rejected alternatives |
+| `/Users/fenster/dev/decloud/_ai/decisions/no-magic-zero-modes.md` | NEW | M1 port=0 policy; M5 worker shape; magic-mode anti-pattern |
+| `/Users/fenster/dev/decloud/_ai/cli-flag-surface-coherence.md` | NEW | Four-surface drift class-of-bug + grep recipe |
+| `/Users/fenster/dev/decloud/_ai/MEMORY.md` | UPDATED | Index entries for the three new files |
 
 No files removed. No files renamed. No files written outside `_ai/` and this report.
 

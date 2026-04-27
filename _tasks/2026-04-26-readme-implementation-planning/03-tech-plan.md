@@ -11,7 +11,7 @@
 
 Don's M1 acceptance criteria, restated in functional terms so we cannot drift:
 
-> An operator who is SSH'd into a host that already has Docker, Caddy, and the `decloud` server binary installed — and who has a directory containing a `Dockerfile` and an `env.sh` — can run **one** `decloud deploy service` command, and at the end of that command (a) the container is running on a shared Docker network, (b) `/opt/declouding/config/services/<name>.toml` exists and is parseable by the same binary, (c) `/opt/declouding/config/caddy/Caddyfile` has been regenerated and `caddy reload` has succeeded, (d) `curl https://<host>/` reaches the container with a real Let's Encrypt cert (DNS permitting), and (e) the same binary's `status`, `logs`, `start`, `stop`, `restart`, and `unregister` subcommands operate on that service. Strategy is `recreate` only — no blue/green this milestone. Exit code is 0 on success, non-zero with a specific exit code per failure class on failure (see §5.4).
+> An operator who is SSH'd into a host that already has Docker, Caddy, and the `decloud` server binary installed — and who has a directory containing a `Dockerfile` and an `env.sh` — can run **one** `decloud deploy service` command, and at the end of that command (a) the container is running on a shared Docker network, (b) `/opt/decloud/config/services/<name>.toml` exists and is parseable by the same binary, (c) `/opt/decloud/config/caddy/Caddyfile` has been regenerated and `caddy reload` has succeeded, (d) `curl https://<host>/` reaches the container with a real Let's Encrypt cert (DNS permitting), and (e) the same binary's `status`, `logs`, `start`, `stop`, `restart`, and `unregister` subcommands operate on that service. Strategy is `recreate` only — no blue/green this milestone. Exit code is 0 on success, non-zero with a specific exit code per failure class on failure (see §5.4).
 
 That is the contract. Everything below serves it.
 
@@ -30,7 +30,7 @@ This matches Don's likely intent and the README's example install line (`go inst
 ### 1.2 Directory tree
 
 ```
-declouding/
+decloud/
   go.mod
   go.sum
   cmd/
@@ -48,7 +48,7 @@ declouding/
       logs.go
       caddy_reload.go
     config/                         # process-level config (paths, log level)
-      paths.go                      # default /opt/declouding/* paths, overridable
+      paths.go                      # default /opt/decloud/* paths, overridable
       config.go                     # Viper-backed loader for /etc/decloud/config.toml
     registry/                       # service registration TOML I/O + state
       types.go                      # ServiceSpec, ServiceState, schema_version
@@ -83,7 +83,7 @@ declouding/
 - `internal/envcap/` — env.sh capture is non-trivial enough (see §3) and reused by `decloud deploy service` and any future redeploy/reload paths. Lives on its own so it can be tested in isolation against a real bash.
 - `internal/dockerdrv/` (not `internal/docker/`) — `docker` is a common identifier and we may import `github.com/docker/docker` SDK material in M4+. Avoid the name clash now.
 - `internal/ids/` — deterministic generation of deploy IDs (e.g. `20260426-153012-ab12cd`) and container names (`decloud-<service>-<deploy-id>`). Tiny but central, and the deterministic format will matter when M4 needs to find "the old container" to kill.
-- `internal/config/` — separate from `internal/registry/` because process-level config (where is `/opt/declouding/`?) is not service registration data.
+- `internal/config/` — separate from `internal/registry/` because process-level config (where is `/opt/decloud/`?) is not service registration data.
 
 The package boundary that matters most for M1 is **`internal/deploy/` depends only on the four interfaces** (`registry.Store`, `envcap.Capturer`, `caddy.Generator` + `caddy.Reloader`, `dockerdrv.Driver`). That is what makes it testable with Gomock-generated mocks.
 
@@ -125,7 +125,7 @@ Mandated by CLAUDE.md. Use `github.com/spf13/cobra` latest (v1.8+). `RunE`-style
 
 ### 2.2 Process config — Viper
 
-Mandated by CLAUDE.md for "YAML configuration." We need very little process-level config in M1 (just an override for the `/opt/declouding/` root, useful for tests), but wire it now so M2+ does not retrofit. Viper reads `/etc/decloud/config.toml` if present, env vars `DECLOUD_*`, and CLI flags, in that precedence. **Viper is for process config only — service registrations are read directly via the TOML lib (see §2.3) because Viper's merging semantics are wrong for "many independent files."**
+Mandated by CLAUDE.md for "YAML configuration." We need very little process-level config in M1 (just an override for the `/opt/decloud/` root, useful for tests), but wire it now so M2+ does not retrofit. Viper reads `/etc/decloud/config.toml` if present, env vars `DECLOUD_*`, and CLI flags, in that precedence. **Viper is for process config only — service registrations are read directly via the TOML lib (see §2.3) because Viper's merging semantics are wrong for "many independent files."**
 
 ### 2.3 TOML — `github.com/pelletier/go-toml/v2`
 
@@ -172,7 +172,7 @@ package registry
 const CurrentSchemaVersion = 1
 
 // ServiceSpec is the on-disk registration for one service.
-// Persisted at /opt/declouding/config/services/<Name>.toml.
+// Persisted at /opt/decloud/config/services/<Name>.toml.
 type ServiceSpec struct {
     SchemaVersion int    `toml:"schema_version"`
     Name          string `toml:"name"`
@@ -544,7 +544,7 @@ decloud deploy service [flags] <source-dir>
 | `--readiness-timeout` | duration | no | `60s` | Total time to wait for readiness before failing. |
 | `--strategy` | string | no | `recreate` | M1 accepts only `recreate`. `blue_green` produces "not supported until M4" error. |
 | `--dockerfile` | string | no | `Dockerfile` | Relative to `<source-dir>`. |
-| `--config-root` | string | no | `/opt/declouding` | Override for tests; honors `DECLOUD_ROOT` env var. |
+| `--config-root` | string | no | `/opt/decloud` | Override for tests; honors `DECLOUD_ROOT` env var. |
 
 ### 4.3 Positional argument
 
@@ -558,7 +558,7 @@ package cli
 const (
     ExitOK             = 0
     ExitUsageError     = 2  // bad flags, missing args
-    ExitConfigError    = 10 // /opt/declouding not writable, etc.
+    ExitConfigError    = 10 // /opt/decloud not writable, etc.
     ExitEnvCaptureFail = 20 // env.sh failed to source
     ExitBuildFail      = 30 // docker build returned non-zero
     ExitRunFail        = 40 // docker run returned non-zero
@@ -601,19 +601,19 @@ This is M1's main correctness hazard. The sequence for a redeploy of an existing
 
 ---
 
-## 5. File layout on disk under `/opt/declouding/`
+## 5. File layout on disk under `/opt/decloud/`
 
 Refining the README's provisional layout to something concrete enough to implement:
 
 ```
-/opt/declouding/
+/opt/decloud/
   config/
     services/
       <name>.toml                # one per service, owner root, mode 0644
     jobs/                         # M5 — exists empty in M1 so backups are simple
     caddy/
       Caddyfile                   # generated by decloud; owner root, mode 0644
-                                  # `caddy reload --config /opt/declouding/config/caddy/Caddyfile`
+                                  # `caddy reload --config /opt/decloud/config/caddy/Caddyfile`
   secrets/
     <name>/                       # M3 — exists empty in M1
                                   # owner root, mode 0700; files inside 0600
@@ -637,7 +637,7 @@ Refining the README's provisional layout to something concrete enough to impleme
 - `state/deploys/<name>/<deploy-id>/source.tar.gz` — yes; tar of source dir at deploy time (handy for "what did we actually build?" forensics).
 - Everything else: directories created with correct permissions, contents empty.
 
-**Permissions:** `/opt/declouding/secrets/` is mode 0700 from day one even though we don't write into it in M1. Setting permissions at directory create time is free; doing it retroactively when M3 lands is a security regression waiting to happen.
+**Permissions:** `/opt/decloud/secrets/` is mode 0700 from day one even though we don't write into it in M1. Setting permissions at directory create time is free; doing it retroactively when M3 lands is a security regression waiting to happen.
 
 **Ownership:** all files owned by root in production. In tests we override `--config-root` to a tmpdir.
 
@@ -720,7 +720,7 @@ Stated explicitly so Linus can't miss them in the prose:
 
 **Q3 (subsidiary):** Is wiring Viper in M1 (despite needing essentially no process-level config) worth it, or is it a YAGNI violation? My read: it's two files (~50 lines) and hooks `--config-root` to `DECLOUD_ROOT` env var, which tests need anyway. Keeps M2 from doing surgery on the cli wiring. Confirm or push back.
 
-**Q4 (subsidiary):** Should the source bundle (`state/deploys/<name>/<deploy-id>/source.tar.gz`) be written in M1 at all, or defer to M6 when backups exist? My read: write it. It's <50 lines of code, gives us "what built this?" forensics for free, and M6's backup just sweeps `/opt/declouding/` so it gets backed up automatically once M6 lands. Skipping it now means retrofitting deploy IDs and source preservation later. Confirm or push back.
+**Q4 (subsidiary):** Should the source bundle (`state/deploys/<name>/<deploy-id>/source.tar.gz`) be written in M1 at all, or defer to M6 when backups exist? My read: write it. It's <50 lines of code, gives us "what built this?" forensics for free, and M6's backup just sweeps `/opt/decloud/` so it gets backed up automatically once M6 lands. Skipping it now means retrofitting deploy IDs and source preservation later. Confirm or push back.
 
 ---
 
@@ -733,7 +733,7 @@ Restating Don's cuts in implementation-precise terms so Kent and Rob have a chec
 - **No `decloud backup` subcommand, no restic invocation, no `internal/backup/` package, no nightly timer for backups.** (M6.)
 - **No `decloud bootstrap` subcommand, no shell script in `scripts/bootstrap.sh`, no apt invocations, no host systemd unit installation.** Operator installs Docker, Caddy, and the `decloud` binary by hand for M1. (M2.)
 - **No volume/mount support.** The `--mount` flag is reserved (rejected with "M3 only" if used); the `Mounts` field is in the TOML schema (so M3 doesn't bump version) but never populated; `dockerdrv.RunRequest.Mounts` is wired through but always empty.
-- **No in-house supervisor / no Declouding host systemd unit.** Container restart-on-crash is `--restart=unless-stopped` on the docker run line. (Maybe M7, maybe never.)
+- **No in-house supervisor / no Decloud host systemd unit.** Container restart-on-crash is `--restart=unless-stopped` on the docker run line. (Maybe M7, maybe never.)
 - **No blue/green deploy, no Caddy admin API calls, no concurrent old+new containers, no per-service deploy lock.** Strategy is `recreate` only; the `--strategy=blue_green` flag value is rejected with a clear "M4 only" message. (M4.)
 - **No image pruning, no `decloud gc`, no weekly timer.** (M6.)
 - **No log aggregation beyond `decloud logs <name>` which shells out to `docker logs <container>`.** (Probably never.)

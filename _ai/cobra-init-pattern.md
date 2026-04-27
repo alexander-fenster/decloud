@@ -32,6 +32,6 @@ The warning text is loadbearing: name what's happening, what we did about it, th
 
 - Exit-70-on-`--help` on a fresh box (the original B1 blocker, `011-kevlin-review.md`).
 - A locked-out operator on day-one before bootstrap who can't even read help text.
-- Test runs on macOS dev boxes that fight `/opt/declouding` permissions.
+- Test runs on macOS dev boxes that fight `/opt/decloud` permissions.
 
 The pattern generalizes: any future Cobra command that needs an FS-touching init should prefer `PersistentPreRunE` + fallback over `OnInitialize` + bail.

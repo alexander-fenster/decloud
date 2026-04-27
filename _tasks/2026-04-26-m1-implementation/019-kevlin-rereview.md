@@ -69,7 +69,7 @@ Spot-checked 5 sites:
 - `internal/registry/store.go:140` (mkdir secrets) — `%w: mkdir secrets dir %s: %w` ✓
 - `internal/deploy/readiness.go:64` (readiness wrap) — `%w: %w` ✓
 
-`grep -rn '%w: %v' /Users/fenster/dev/declouding/internal/ /Users/fenster/dev/declouding/cmd/` returns zero matches. All 21 sites are converted.
+`grep -rn '%w: %v' /Users/fenster/dev/decloud/internal/ /Users/fenster/dev/decloud/cmd/` returns zero matches. All 21 sites are converted.
 
 The optional `TestDeploy_BuildErrorPreservesInnerSentinel` proves the chain works: a synthetic `errors.New("synthetic build err")` wrapped as `fmt.Errorf("docker build: %w", sentinel)` survives the orchestrator's `fmt.Errorf("%w: %w", ErrBuild, err)` wrap and is recoverable via `errors.Is(err, sentinel)`. Good — this is the test that would catch a regression to `%v` in the future.
 
@@ -141,7 +141,7 @@ Spot-checked four claims:
    - Row 40 now says "`docker network create` (the deployer ensures the `decloud` network on every deploy)" — verified against `service.go:131-134` wrapping `NetworkEnsure` failures as `ErrRun`.
    - Row 40 explicitly excludes `docker stop`-on-missing-container, redirecting to row 10 — accurate.
 
-2. **§1 quick-start `env.sh` optional language** (`usage.md:9-11`): "If you do not pass `--env-file`, Declouding looks for `<source-dir>/env.sh` and uses it if it exists; if it does not, the container runs with no captured environment. Passing `--env-file=<path>` to a missing file is a hard error (exit 10) — auto-discovery is silent, but explicit asks must succeed." — verified against `resolveEnvFile()` in `deploy_service.go:103-118`. The wording is precisely the contract.
+2. **§1 quick-start `env.sh` optional language** (`usage.md:9-11`): "If you do not pass `--env-file`, Decloud looks for `<source-dir>/env.sh` and uses it if it exists; if it does not, the container runs with no captured environment. Passing `--env-file=<path>` to a missing file is a hard error (exit 10) — auto-discovery is silent, but explicit asks must succeed." — verified against `resolveEnvFile()` in `deploy_service.go:103-118`. The wording is precisely the contract.
 
 3. **§2 step 0** (`usage.md:76`): "Ensure the `decloud` Docker network exists. Missing networks are created on the fly; failures here surface as exit 40." — verified.
 

@@ -9,7 +9,7 @@
 
 1. **Command run:**
    ```
-   cd /Users/fenster/dev/declouding && go test ./... -v -count=1 2>&1
+   cd /Users/fenster/dev/decloud && go test ./... -v -count=1 2>&1
    ```
 
 2. **Go version:**

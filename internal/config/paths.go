@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 )
 
-const DefaultRoot = "/opt/declouding"
+const DefaultRoot = "/opt/decloud"
 
 type Paths struct {
 	Root          string

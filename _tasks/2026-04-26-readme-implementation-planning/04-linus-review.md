@@ -70,9 +70,9 @@ Already answered in Q1. Real but managed. M4 needs a one-time container-recreati
 
 **Yes, mildly.** This is the weakest call in Joel's plan.
 
-Joel's defense: "two files (~50 lines), hooks `--config-root` to `DECLOUD_ROOT` env var, tests need it anyway." That defense doesn't hold up. Cobra alone supports flag-from-env binding via `viper.BindPFlag` is the Viper way, but Cobra has a simpler `cmd.Flags().StringVar(&v, "config-root", "/opt/declouding", "...")` plus reading `os.Getenv("DECLOUD_ROOT")` as a default in three lines of code. You don't need Viper for this.
+Joel's defense: "two files (~50 lines), hooks `--config-root` to `DECLOUD_ROOT` env var, tests need it anyway." That defense doesn't hold up. Cobra alone supports flag-from-env binding via `viper.BindPFlag` is the Viper way, but Cobra has a simpler `cmd.Flags().StringVar(&v, "config-root", "/opt/decloud", "...")` plus reading `os.Getenv("DECLOUD_ROOT")` as a default in three lines of code. You don't need Viper for this.
 
-The CLAUDE.md mandate is "YAML configuration with Viper." M1 has no YAML/TOML configuration that the operator edits. The TOML files in `/opt/declouding/config/services/` are written and read by `decloud` itself, not edited by humans, so they are NOT "configuration" in the Viper sense — they are persistent state.
+The CLAUDE.md mandate is "YAML configuration with Viper." M1 has no YAML/TOML configuration that the operator edits. The TOML files in `/opt/decloud/config/services/` are written and read by `decloud` itself, not edited by humans, so they are NOT "configuration" in the Viper sense — they are persistent state.
 
 That said: **this is not a blocker.** It's premature, but it's 50 lines that are easy to delete or keep. If Joel wants to wire it now to avoid retrofitting in M2 (when the bootstrap might genuinely add a `/etc/decloud/config.toml` for global settings), fine. I would rather see it deferred to M2 when there's an actual file for it to read, but I'm not going to fight on this one.
 
@@ -90,20 +90,20 @@ Joel's reasoning is solid: <50 lines, "what built this?" forensics for free, aut
 
 ### ISSUE 1 (BLOCKER, security/correctness): The TOML registry stores plaintext env including secrets, in a world-readable file
 
-**Problem:** Joel's §3.1 puts `Env map[string]string` directly into `/opt/declouding/config/services/<name>.toml`, mode 0644. The README's "Handling secrets" section explicitly says: *"`env.sh` and any deploy-provided secret files are stored on the host under `/opt/declouding/secrets/<service>/` with owner-read-only permissions."*
+**Problem:** Joel's §3.1 puts `Env map[string]string` directly into `/opt/decloud/config/services/<name>.toml`, mode 0644. The README's "Handling secrets" section explicitly says: *"`env.sh` and any deploy-provided secret files are stored on the host under `/opt/decloud/secrets/<service>/` with owner-read-only permissions."*
 
-The README is unambiguous: env-vars-from-env.sh are secret-class data and live in `secrets/`, mode 0600. Joel's plan puts them in `config/`, mode 0644. **This is a direct violation of the README's secrets architecture.** Any service that does `export DATABASE_PASSWORD=hunter2` in its env.sh will end up with that password in a world-readable file under `/opt/declouding/config/services/foo.toml`.
+The README is unambiguous: env-vars-from-env.sh are secret-class data and live in `secrets/`, mode 0600. Joel's plan puts them in `config/`, mode 0644. **This is a direct violation of the README's secrets architecture.** Any service that does `export DATABASE_PASSWORD=hunter2` in its env.sh will end up with that password in a world-readable file under `/opt/decloud/config/services/foo.toml`.
 
 **Impact:**
 - Violates README contract.
 - Creates a security regression that M3 will then have to migrate out of (move env from config TOML to secrets dir, schema bump).
-- If anyone backs up `/opt/declouding/config/` separately from `/opt/declouding/secrets/` at any point in the project's lifetime (say, to share non-secret config in git per the README's deferred "Git-backed mirroring" idea), the secrets leak.
+- If anyone backs up `/opt/decloud/config/` separately from `/opt/decloud/secrets/` at any point in the project's lifetime (say, to share non-secret config in git per the README's deferred "Git-backed mirroring" idea), the secrets leak.
 
 **Options:**
 
-- **Option A (Minimal):** Set mode 0600 on `/opt/declouding/config/services/*.toml` and move on. Pros: one-line fix. Cons: violates README's structural separation of `config/` (non-secret) from `secrets/` (secret). The README's whole "Git-backed mirror of non-secret config" idea (mentioned as out-of-scope-but-easy-to-add) becomes hard because non-secret and secret are now mixed in one file.
+- **Option A (Minimal):** Set mode 0600 on `/opt/decloud/config/services/*.toml` and move on. Pros: one-line fix. Cons: violates README's structural separation of `config/` (non-secret) from `secrets/` (secret). The README's whole "Git-backed mirror of non-secret config" idea (mentioned as out-of-scope-but-easy-to-add) becomes hard because non-secret and secret are now mixed in one file.
 
-- **Option B (Proper, RECOMMENDED):** Split the TOML into two files at write time. `/opt/declouding/config/services/<name>.toml` mode 0644 contains everything EXCEPT `env`. `/opt/declouding/secrets/<name>/env.toml` mode 0600 contains `env = { ... }`. Loader reads both and merges in memory. Pros: matches README architecture; M3 secrets work is additive (just add file mounts under `secrets/<name>/files/`); future git-mirror story works. Cons: two files per service; loader is slightly more complex; need to handle "secrets file missing" as a real error class.
+- **Option B (Proper, RECOMMENDED):** Split the TOML into two files at write time. `/opt/decloud/config/services/<name>.toml` mode 0644 contains everything EXCEPT `env`. `/opt/decloud/secrets/<name>/env.toml` mode 0600 contains `env = { ... }`. Loader reads both and merges in memory. Pros: matches README architecture; M3 secrets work is additive (just add file mounts under `secrets/<name>/files/`); future git-mirror story works. Cons: two files per service; loader is slightly more complex; need to handle "secrets file missing" as a real error class.
 
 - **Option C (Defer):** Document the limitation, ship M1 with everything in one mode-0600 file under `config/`, plan the split in M3 with a schema bump. Pros: ships M1 fast. Cons: M3 has to do data migration; we ship a known-violating M1 to production.
 
@@ -168,9 +168,9 @@ These are directly contradictory and the answer matters: it's the difference bet
 
 ### Caddy lifecycle in M1 is implicit
 
-**Problem:** M1 says "operator manually installs Caddy." But: how is Caddy configured to read `/opt/declouding/config/caddy/Caddyfile`? When the first `decloud deploy service` runs, is Caddy already running? Joel's `caddyCLIReloader` does `caddy reload --config <path>`, which requires Caddy to already be running with that config. The operator setup is undocumented.
+**Problem:** M1 says "operator manually installs Caddy." But: how is Caddy configured to read `/opt/decloud/config/caddy/Caddyfile`? When the first `decloud deploy service` runs, is Caddy already running? Joel's `caddyCLIReloader` does `caddy reload --config <path>`, which requires Caddy to already be running with that config. The operator setup is undocumented.
 
-**Recommendation:** Add a single paragraph to the M1 plan documenting the manual operator setup: *"Operator must install Caddy with a systemd unit pointing `caddy run --config /opt/declouding/config/caddy/Caddyfile` and ensure the file exists (start with an empty file or `decloud` writes one on first deploy)."* And: **the M1 deployer should write an empty/minimal Caddyfile if `/opt/declouding/config/caddy/Caddyfile` does not exist when the first deploy runs**, otherwise Caddy is started against a missing file and crashes. Cheap fix; prevents a confusing first-deploy failure.
+**Recommendation:** Add a single paragraph to the M1 plan documenting the manual operator setup: *"Operator must install Caddy with a systemd unit pointing `caddy run --config /opt/decloud/config/caddy/Caddyfile` and ensure the file exists (start with an empty file or `decloud` writes one on first deploy)."* And: **the M1 deployer should write an empty/minimal Caddyfile if `/opt/decloud/config/caddy/Caddyfile` does not exist when the first deploy runs**, otherwise Caddy is started against a missing file and crashes. Cheap fix; prevents a confusing first-deploy failure.
 
 ### `--mount` flag rejected at CLI but `Mounts` field accepted by TOML loader?
 
@@ -239,7 +239,7 @@ These are things that would bite us in week one of M1 execution that nobody ment
 
 4. **The `_docs/` and `_ai/` directories.** CLAUDE.md and the workflow reference these but the plan never says what goes in them for M1. Raymond will need a target. Suggest: `_docs/cli/decloud-deploy-service.md`, `_docs/architecture/m1-recreate-strategy.md`, `_ai/decisions/m1-scope.md`. Don should add a "Raymond's deliverables for M1" section to the plan.
 
-5. **Error logging / structured output to `/opt/declouding/logs/decloud.log`.** Joel mentions this file in the layout but never defines log format, library, or rotation. Use `slog` (Go stdlib since 1.21), JSON format, write to both stderr and the log file. Let Raymond document the format. Logrotate config is M2's bootstrap problem.
+5. **Error logging / structured output to `/opt/decloud/logs/decloud.log`.** Joel mentions this file in the layout but never defines log format, library, or rotation. Use `slog` (Go stdlib since 1.21), JSON format, write to both stderr and the log file. Let Raymond document the format. Logrotate config is M2's bootstrap problem.
 
 ---
 

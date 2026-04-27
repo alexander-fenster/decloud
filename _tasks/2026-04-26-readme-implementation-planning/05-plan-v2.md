@@ -10,11 +10,11 @@
 
 For Joel's diff convenience, here is what moved between v1 and v2 — everything else is intentionally preserved.
 
-1. **Secrets are split out of the service config TOML.** v1 put `env` (and implicitly any future secret-file declarations) inside `/opt/declouding/config/services/<name>.toml`. That violates the README's "Handling secrets" contract. v2 mandates a two-file split: a non-secret config TOML in `config/services/<name>.toml` mode 0644, and a secrets TOML in `secrets/<name>/env.toml` mode 0600. Detailed in §3 (Secrets Architecture). Joel: rewrite `registry.Store` to load both and merge in memory, write both atomically. Strategy/build/run/route/readiness stay in config. `Env` map moves to secrets. State stays in config (it is not secret).
+1. **Secrets are split out of the service config TOML.** v1 put `env` (and implicitly any future secret-file declarations) inside `/opt/decloud/config/services/<name>.toml`. That violates the README's "Handling secrets" contract. v2 mandates a two-file split: a non-secret config TOML in `config/services/<name>.toml` mode 0644, and a secrets TOML in `secrets/<name>/env.toml` mode 0600. Detailed in §3 (Secrets Architecture). Joel: rewrite `registry.Store` to load both and merge in memory, write both atomically. Strategy/build/run/route/readiness stay in config. `Env` map moves to secrets. State stays in config (it is not secret).
 2. **`env.sh` capture must be macOS-portable.** v1 implicitly accepted Joel's `env -0` mechanism. That flag is a GNU coreutils extension and is absent from BSD env on macOS, which is the maintainer's dev box. Constraint added to §4 (Open Design Decisions): the capture mechanism must work unmodified on macOS and Linux. Joel picks the exact mechanism in the tech plan; my recommendation in §4 is the `compgen -e` + `printf '%s=%s\0'` bash-builtin approach Linus floated, but I am not nailing the implementation here — that is Joel's call provided the constraint is met.
 3. **`schema_version` stays at 1 across M1 and M3.** v1 said M3 bumps to v2. That contradicted Joel's reservation strategy and would have forced migration code into M3 for no benefit. v2 commits to the reservation strategy: M1 declares the full schema shape including fields M1 does not populate (`Mounts`, secret-file declarations); M3 simply starts populating them. The schema_version only bumps when a field's *meaning* changes in a way that breaks old loaders. Joel's strict-mode `DisallowUnknownFields()` plus the schema_version field together give us forward-compat without migration code. Detailed in §5 (Schema Versioning).
 4. **`--mount` and reserved-but-unpopulated TOML fields are also rejected by the loader, not just the CLI.** Closes the hand-edit loophole Linus flagged. M1 loader rejects non-empty `Mounts` with the same "M3 only" error as the CLI. Detailed in §7 (M1 Acceptance and Cuts).
-5. **Caddy lifecycle on first deploy is documented and the deployer writes a stub Caddyfile if missing.** v1 left the operator to figure out how Caddy boots before the first deploy. v2 mandates that M1's deployer writes an empty/minimal Caddyfile if `/opt/declouding/config/caddy/Caddyfile` does not exist when the first deploy runs, so the operator's `caddy run --config <path>` does not crash on a missing file. Detailed in §7.
+5. **Caddy lifecycle on first deploy is documented and the deployer writes a stub Caddyfile if missing.** v1 left the operator to figure out how Caddy boots before the first deploy. v2 mandates that M1's deployer writes an empty/minimal Caddyfile if `/opt/decloud/config/caddy/Caddyfile` does not exist when the first deploy runs, so the operator's `caddy run --config <path>` does not crash on a missing file. Detailed in §7.
 6. **Drop the `cache/docker-network-created` sentinel.** Premature optimization Linus correctly flagged. Just call `docker network inspect ... || docker network create ...` every deploy. Removed from the disk layout in §6.
 7. **Defer Viper to M2.** v1 implicitly accepted Joel's wire-Viper-now plan. v2 defers it: M1 uses plain Cobra plus `os.Getenv("DECLOUD_ROOT")` for the one knob that matters (`--config-root`). M2 introduces Viper when there is an actual `/etc/decloud/config.toml` to read. Saves ~50 lines of code that would otherwise need maintenance for no current benefit. Detailed in §8.
 8. **M3 is acknowledged as a fat milestone, with a planned subdivision into M3a/M3b.** No execution impact on M1. Detailed in §9 (Milestone Sequence).
@@ -34,13 +34,13 @@ Read the README as a contract, not an essay. Stripped to obligations, it specifi
   - **Client** (laptop): package a source tree, push it over SSH to the server, proxy stdio, exit with the remote exit code. That is its entire job.
   - **Server-side** (host): the real CLI — `deploy`, `unregister`, `start`, `stop`, `restart`, `status`, `logs`, `caddy reload`, `backup {run,list,restore}`, `gc`.
 - **Two workload types:** services (long-running containers, optional Caddy-routed hostnames) and jobs (containers run by systemd timers, exit on completion).
-- **Persistence layout** rooted at `/opt/declouding/{config,secrets,state,logs}` so a single `restic` snapshot covers everything.
+- **Persistence layout** rooted at `/opt/decloud/{config,secrets,state,logs}` so a single `restic` snapshot covers everything.
 - **Caddy** as the only ingress. Caddyfile on disk is the persisted source of truth, regenerated from registrations and reloaded; hot-path upstream swaps go through Caddy's admin API.
 - **Deploy lifecycle**: build → start new container on shared Docker network → wait for readiness (HEALTHCHECK or HTTP probe) → flip Caddy upstream via admin API → SIGTERM old, grace period, SIGKILL. Default strategy `blue/green`; `recreate` for services with exclusive resources.
 - **Env model**: `env.sh` is sourced at deploy time; resulting environment is captured and persisted with the registration, then injected at `docker run`. Never baked into the image.
-- **Secrets architecture (load-bearing for v2):** the README's "Handling secrets" section explicitly says env-vars-from-`env.sh` and any deploy-provided secret files live under `/opt/declouding/secrets/<service>/` with owner-read-only permissions. Secrets and non-secret config are structurally separated on disk, not just logically separated within the same file. This is the README contract that v1 violated; v2 honors it.
+- **Secrets architecture (load-bearing for v2):** the README's "Handling secrets" section explicitly says env-vars-from-`env.sh` and any deploy-provided secret files live under `/opt/decloud/secrets/<service>/` with owner-read-only permissions. Secrets and non-secret config are structurally separated on disk, not just logically separated within the same file. This is the README contract that v1 violated; v2 honors it.
 - **Mounts**: explicit host→container file/dir mounts, declared at deploy time, mostly read-only secret files (e.g. Google service account JSON).
-- **Backups**: nightly `restic` to S3-compatible storage of `/opt/declouding/`, all declared service volumes, and Caddy's ACME data dir. Repo password lives off-host.
+- **Backups**: nightly `restic` to S3-compatible storage of `/opt/decloud/`, all declared service volumes, and Caddy's ACME data dir. Repo password lives off-host.
 - **Image GC**: weekly `docker system prune -a --filter until=168h` and `docker builder prune --filter until=168h`, plus `decloud gc` on demand.
 
 **Things the README explicitly does NOT promise** (Non-Goals section): autoscaling, scale-to-zero, prebuilt-image deploys, web UI, public management API, multi-node, K8s compat, full Cloud Run parity, per-service host systemd units for long-running services. Hold the line on these — every one of them is a tar pit.
@@ -59,13 +59,13 @@ The README leaves two open:
 
 ## 3. Secrets Architecture (the v2 fix)
 
-The README's "Handling secrets" section is unambiguous: `env.sh` output and deploy-provided secret files live under `/opt/declouding/secrets/<service>/` with owner-read-only permissions. v1 violated this by stuffing the captured env into `/opt/declouding/config/services/<name>.toml` (mode 0644). v2 fixes this by splitting the registration into two files at write time.
+The README's "Handling secrets" section is unambiguous: `env.sh` output and deploy-provided secret files live under `/opt/decloud/secrets/<service>/` with owner-read-only permissions. v1 violated this by stuffing the captured env into `/opt/decloud/config/services/<name>.toml` (mode 0644). v2 fixes this by splitting the registration into two files at write time.
 
 ### 3.1 The split
 
 Per service `<name>`:
 
-- **`/opt/declouding/config/services/<name>.toml`** — owner root, mode **0644**, world-readable. Contains:
+- **`/opt/decloud/config/services/<name>.toml`** — owner root, mode **0644**, world-readable. Contains:
   - `schema_version`
   - `name`
   - `source` (the absolute source dir path; not secret)
@@ -76,7 +76,7 @@ Per service `<name>`:
   - `readiness`
   - `state` (deploy ID, container ID, container name, last-deployed-at — not secret; useful to inspect without sudo)
 
-- **`/opt/declouding/secrets/<name>/env.toml`** — owner root, mode **0600**. Contains:
+- **`/opt/decloud/secrets/<name>/env.toml`** — owner root, mode **0600**. Contains:
   - `schema_version` (must match the config file's; loader enforces)
   - `env` (the captured `env.sh` output, the actual secret-class data)
 
@@ -208,10 +208,10 @@ Three "obvious" alternatives, rejected:
 
 The first milestone has to be the one that puts the **most design risk under load** while producing something the operator can actually use. That is the service deploy path.
 
-### 6.2 Disk layout under `/opt/declouding/` for M1
+### 6.2 Disk layout under `/opt/decloud/` for M1
 
 ```
-/opt/declouding/
+/opt/decloud/
   config/
     services/
       <name>.toml                # mode 0644 — non-secret registration
@@ -253,7 +253,7 @@ On a fresh Ubuntu LTS host with Docker, Caddy, and the `decloud` server binary a
 4. `curl https://foo.example.com/` works, served by Caddy with a real Let's Encrypt cert (assuming DNS is pointed correctly — DNS is operator's job per README).
 5. `decloud status foo` and `decloud logs foo` return useful output.
 6. `decloud stop foo` / `decloud start foo` / `decloud restart foo` / `decloud unregister foo` all behave per their names. `unregister` removes both registration files (in the §3.3 order), removes the container, regenerates the Caddyfile, reloads.
-7. **First-deploy Caddy bootstrap:** if `/opt/declouding/config/caddy/Caddyfile` does not exist when the first `decloud deploy service` runs, the deployer writes a minimal valid Caddyfile (e.g. an empty file or a no-op stanza Joel finalizes) before invoking `caddy reload`. The operator's pre-installed Caddy systemd unit must reference the same path. If Caddy is not running when `caddy reload` is invoked, we surface a clear error pointing at the operator's setup checklist.
+7. **First-deploy Caddy bootstrap:** if `/opt/decloud/config/caddy/Caddyfile` does not exist when the first `decloud deploy service` runs, the deployer writes a minimal valid Caddyfile (e.g. an empty file or a no-op stanza Joel finalizes) before invoking `caddy reload`. The operator's pre-installed Caddy systemd unit must reference the same path. If Caddy is not running when `caddy reload` is invoked, we surface a clear error pointing at the operator's setup checklist.
 8. **Loader integrity:** the loader rejects (a) `schema_version` mismatch, (b) non-empty `Mounts` (M3-only), (c) `strategy != "recreate"` (blue/green is M4-only), (d) wrong file permissions on `secrets/<name>/env.toml`, (e) any unknown TOML field (strict mode), (f) config exists but secrets file missing. Each rejection has a specific, actionable error message.
 
 ### 7.2 Explicit non-goals for M1
@@ -267,7 +267,7 @@ Cut these or we do not ship this year:
 - **No image GC.** M6.
 - **No host bootstrap script.** Manual install for M1. M2.
 - **No persistent volumes / no `--mount` support.** The `--mount` CLI flag is rejected with "M3 only"; the `Mounts` field is reserved in the schema but the loader rejects non-empty values with the same "M3 only" error. (Closes the hand-edit loophole.)
-- **No restart-on-crash supervisor.** Use Docker's `--restart=unless-stopped`. The README's "host-level Declouding supervisor" can wait — Docker already does the boring 90% of this.
+- **No restart-on-crash supervisor.** Use Docker's `--restart=unless-stopped`. The README's "host-level Decloud supervisor" can wait — Docker already does the boring 90% of this.
 - **No Viper.** M2 wires it when there's an actual `/etc/decloud/config.toml` to read.
 
 ### 7.3 Risks to flag at M1
@@ -287,7 +287,7 @@ Cut these or we do not ship this year:
 
 Rationale (Linus's argument, accepted): Cobra alone supports flag-from-env-default in three lines (`StringVar` + read `os.Getenv("DECLOUD_ROOT")` for the default). M1 has no `/etc/decloud/config.toml` for Viper to read. Wiring Viper now buys nothing M1 needs and is ~50 lines that someone has to maintain in the meantime.
 
-M1 implementation: `internal/cli/root.go` defines `--config-root` defaulting to `os.Getenv("DECLOUD_ROOT")` if non-empty, else `/opt/declouding`. The `internal/config/` package becomes a tiny thing that holds path constants and the config root override. M2 retrofits Viper and wires it into the same package without touching any other code.
+M1 implementation: `internal/cli/root.go` defines `--config-root` defaulting to `os.Getenv("DECLOUD_ROOT")` if non-empty, else `/opt/decloud`. The `internal/config/` package becomes a tiny thing that holds path constants and the config root override. M2 retrofits Viper and wires it into the same package without touching any other code.
 
 If Joel disagrees and wants Viper now to "avoid retrofitting," I'll accept it as a non-blocker, but I want him to defend that view in the revised tech plan rather than carrying it forward by default.
 
@@ -299,10 +299,10 @@ Each milestone is a shippable increment. Do not start the next one until the pre
 
 - **M1 — Service deploy MVP (server-side, recreate strategy).** Defined in detail above. The bedrock. Everything else is built on the registry (config + secrets split), the Caddyfile generator, and the container lifecycle code that lands here.
 
-- **M2 — Host bootstrap.** A `decloud bootstrap` subcommand (or a separate small script — Joel decides) that on a fresh Ubuntu host: installs Docker and Caddy from their official repos, creates the `/opt/declouding/` directory tree with correct permissions (including `secrets/` at 0700), creates the shared Docker network, installs and enables the single Declouding host systemd unit, installs the systemd unit for Caddy pointing at `/opt/declouding/config/caddy/Caddyfile`, drops a logrotate config for `/opt/declouding/logs/decloud.log`, and verifies the install by deploying a built-in trivial "hello" service. **Also: introduces Viper** (the deferral target from §8) when the bootstrap optionally writes a `/etc/decloud/config.toml`. Acceptance: a clean cloud VM is fully usable by the operator within one command + DNS setup.
+- **M2 — Host bootstrap.** A `decloud bootstrap` subcommand (or a separate small script — Joel decides) that on a fresh Ubuntu host: installs Docker and Caddy from their official repos, creates the `/opt/decloud/` directory tree with correct permissions (including `secrets/` at 0700), creates the shared Docker network, installs and enables the single Decloud host systemd unit, installs the systemd unit for Caddy pointing at `/opt/decloud/config/caddy/Caddyfile`, drops a logrotate config for `/opt/decloud/logs/decloud.log`, and verifies the install by deploying a built-in trivial "hello" service. **Also: introduces Viper** (the deferral target from §8) when the bootstrap optionally writes a `/etc/decloud/config.toml`. Acceptance: a clean cloud VM is fully usable by the operator within one command + DNS setup.
 
 - **M3 — Server-side env/mounts/secret-files hardening + client binary.** Don's note: Linus called this fat and he was right. **Plan to subdivide into M3a and M3b when M3's tech plan is written.** Sketch:
-  - **M3a (server-side):** harden env-capture with the full edge-case test suite; implement `--mount` end-to-end (TOML schema becomes populated, loader stops rejecting non-empty `Mounts`, `dockerdrv.RunRequest.Mounts` actually wires through to `docker run -v`); add secret-file declarations stored under `/opt/declouding/secrets/<service>/files/` mode 0600 with the directory at 0700; the `mounts` block in the config TOML can reference paths under `secrets/<name>/files/` and the runtime mounts them read-only into the container.
+  - **M3a (server-side):** harden env-capture with the full edge-case test suite; implement `--mount` end-to-end (TOML schema becomes populated, loader stops rejecting non-empty `Mounts`, `dockerdrv.RunRequest.Mounts` actually wires through to `docker run -v`); add secret-file declarations stored under `/opt/decloud/secrets/<service>/files/` mode 0600 with the directory at 0700; the `mounts` block in the config TOML can reference paths under `secrets/<name>/files/` and the runtime mounts them read-only into the container.
   - **M3b (client):** the `decloud` client binary: package source tree honoring `.dockerignore`, upload via SSH (`tar c <dir> | ssh host decloud deploy service --stdin --name foo ...`), proxy stdio, exit with remote exit code. Distributed via `go install`. Server adds `--stdin` flag that extracts the bundle to a tmpdir and runs the M1 deploy logic against that path; the existing `<source-dir>/env.sh` default discovery applies post-extraction.
   - **`schema_version` stays at 1** (per §5). M3 only populates fields that M1 reserved.
 
@@ -310,9 +310,9 @@ Each milestone is a shippable increment. Do not start the next one until the pre
 
 - **M5 — Jobs.** `decloud deploy job` (client) and the server-side machinery: per-job `<name>.timer` and `<name>.service` systemd units written to `/etc/systemd/system/`, where the `.service` is a oneshot that invokes `decloud run-job <name>`. `decloud unregister <name>` understands jobs too. Status/logs work via `systemctl list-timers` and `journalctl -u`. Job registrations live at `config/jobs/<name>.toml` + `secrets/<name>/env.toml` (same split rule as services; the secrets path is shared between services and jobs for a given `<name>`, so we should reject service-and-job-with-same-name early — add to M5's tech plan).
 
-- **M6 — Backups + image housekeeping.** Install `restic` during bootstrap (retroactively update M2). Write a `decloud-backup.timer` + `.service` pair that runs `decloud backup run` nightly. `decloud backup run` invokes `restic backup` against `/opt/declouding/` plus all volumes discovered from registrations plus Caddy's ACME data dir; repo URL and password come from a host-side config file (NOT from the backed-up secrets dir — chicken and egg). `decloud backup list` and `decloud backup restore` are thin wrappers over `restic`. Independently: a `decloud-gc.timer` runs `decloud gc` weekly, which shells out to `docker system prune -a --filter until=168h` and `docker builder prune --filter until=168h`. `decloud gc` runs the same on demand.
+- **M6 — Backups + image housekeeping.** Install `restic` during bootstrap (retroactively update M2). Write a `decloud-backup.timer` + `.service` pair that runs `decloud backup run` nightly. `decloud backup run` invokes `restic backup` against `/opt/decloud/` plus all volumes discovered from registrations plus Caddy's ACME data dir; repo URL and password come from a host-side config file (NOT from the backed-up secrets dir — chicken and egg). `decloud backup list` and `decloud backup restore` are thin wrappers over `restic`. Independently: a `decloud-gc.timer` runs `decloud gc` weekly, which shells out to `docker system prune -a --filter until=168h` and `docker builder prune --filter until=168h`. `decloud gc` runs the same on demand.
 
-- **M7 — Operational polish.** Anything that genuinely emerged as missing during M1–M6 use. Candidates, in priority order: per-service deploy lock, crash-budget auto-revert, the Declouding host-level supervisor (if Docker's `--restart=unless-stopped` proved insufficient), better `decloud status` output, optional log aggregation if (1) was wrong and we actually need it. Resist scope creep. Anything that smells like a Non-Goal from the README gets killed on sight.
+- **M7 — Operational polish.** Anything that genuinely emerged as missing during M1–M6 use. Candidates, in priority order: per-service deploy lock, crash-budget auto-revert, the Decloud host-level supervisor (if Docker's `--restart=unless-stopped` proved insufficient), better `decloud status` output, optional log aggregation if (1) was wrong and we actually need it. Resist scope creep. Anything that smells like a Non-Goal from the README gets killed on sight.
 
 ---
 
@@ -327,12 +327,12 @@ Linus surfaced these. None are technically interesting; all need explicit owners
   - `_docs/cli/decloud-deploy-service.md` — operator-facing reference for the M1 command.
   - `_docs/architecture/m1-recreate-strategy.md` — explains why M1 uses recreate, how to tell when to expect blue/green (M4).
   - `_docs/architecture/secrets-layout.md` — the §3 split, why it exists, how to inspect.
-  - `_docs/operator/manual-install.md` — the manual install steps that M2's bootstrap will eventually automate (Docker, Caddy, decloud binary, Caddy systemd unit pointing at `/opt/declouding/config/caddy/Caddyfile`).
+  - `_docs/operator/manual-install.md` — the manual install steps that M2's bootstrap will eventually automate (Docker, Caddy, decloud binary, Caddy systemd unit pointing at `/opt/decloud/config/caddy/Caddyfile`).
 - **`_ai/` deliverables (Raymond):**
   - `_ai/decisions/m1-scope.md` — captures why M1 is what it is (this document, summarized).
   - `_ai/decisions/secrets-split.md` — captures the §3 decision and rejected alternatives.
   - `_ai/decisions/schema-versioning.md` — captures §5.
-- **Structured logging.** The decloud binary writes structured JSON logs via `log/slog` (Go stdlib since 1.21) to both stderr and `/opt/declouding/logs/decloud.log`. Format documented in `_docs/`. Logrotate config is M2's bootstrap problem; for M1 the log just appends.
+- **Structured logging.** The decloud binary writes structured JSON logs via `log/slog` (Go stdlib since 1.21) to both stderr and `/opt/decloud/logs/decloud.log`. Format documented in `_docs/`. Logrotate config is M2's bootstrap problem; for M1 the log just appends.
 
 ---
 

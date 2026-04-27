@@ -49,7 +49,7 @@ Rob is unblocked.
     negative existence check on the env path.
   - `TestInit_EmptyStringRootFallsBackToDefault` — uses the
     `DECLOUD_LOG_TO_STDERR_ONLY=1` short-circuit to prove `Init("")` does
-    not panic (cannot exercise the real `/opt/declouding` path from a unit
+    not panic (cannot exercise the real `/opt/decloud` path from a unit
     test, as Joel notes).
 
 ### `internal/cli/root_test.go`
@@ -112,7 +112,7 @@ all six call sites compile and their assertions pass.
 | `TestDeployService_RelativeSourceDirAndRelativeDockerfileBothResolved` | `assert.True(filepath.IsAbs("Dockerfile"))` fails — got `"Dockerfile"`, not absolute | matches ✓ |
 | `TestDeployService_NoPortReturnsExitUsageError` | `require.Error` fails — deploy succeeds and reaches the mocked deployer (gomock raises "no expected calls") | matches ✓ |
 | `TestDeployService_PortZeroExplicitReturnsExitUsageError` | same as above | matches ✓ |
-| `TestRoot_ConfigRootFlagControlsLogPlacement` | `os.Stat(flagRoot/logs/decloud.log)` returns ENOENT — log went somewhere else (in fact `/opt/declouding`, which mkdir-fails as expected; warning visible in test output) | matches ✓ |
+| `TestRoot_ConfigRootFlagControlsLogPlacement` | `os.Stat(flagRoot/logs/decloud.log)` returns ENOENT — log went somewhere else (in fact `/opt/decloud`, which mkdir-fails as expected; warning visible in test output) | matches ✓ |
 
 Sample output excerpts:
 
@@ -135,10 +135,10 @@ Sample output excerpts:
         Messages: log must be at flagRoot/logs/decloud.log
 ```
 
-The `decloud: log dir unavailable, using stderr only: mkdir /opt/declouding: permission denied`
+The `decloud: log dir unavailable, using stderr only: mkdir /opt/decloud: permission denied`
 warning lines that appear in the test output are pre-existing behavior of
 the unfixed `logging.Init()` — every test invocation tries to mkdir
-`/opt/declouding` because `Init` ignores the config root entirely. After
+`/opt/decloud` because `Init` ignores the config root entirely. After
 Rob's fix, those warnings disappear because `Init(rc.ConfigRoot)` will
 mkdir under the test's `t.TempDir()`. This is itself indirect proof of
 the bug.

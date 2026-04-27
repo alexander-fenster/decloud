@@ -113,7 +113,7 @@ Yes. Spot-checks:
 - `TestDeployService_NoPortReturnsExitUsageError` — uses `errors.Is(err, errUsage)`, exactly the right typed-sentinel assertion (rather than substring).
 - `TestDeployService_PortZeroExplicitReturnsExitUsageError` — locks in that explicit `--port=0` is rejected, preventing a future "treat 0 as unset" regression.
 - `TestInit_UsesPassedRootNotEnv` — positive (`os.Stat(passedRoot/logs/decloud.log)`) AND negative (`os.IsNotExist("/path/that/must/not/be/written/to")`). Belt-and-suspenders against future reintroduction of env-reading.
-- `TestInit_EmptyStringRootFallsBackToDefault` — Joel correctly notes this is intentionally weak (only proves no panic). Strong-form testing would require writing to `/opt/declouding`, which is a non-starter. Acceptable.
+- `TestInit_EmptyStringRootFallsBackToDefault` — Joel correctly notes this is intentionally weak (only proves no panic). Strong-form testing would require writing to `/opt/decloud`, which is a non-starter. Acceptable.
 - `TestRoot_ConfigRootFlagControlsLogPlacement` — end-to-end. Asserts the log appears under `flagRoot` and NOT under `envRoot`. Linus's requested explanatory comment is present at root_test.go:69-72.
 
 ### Change-detector tests sneaking in?

@@ -10,10 +10,10 @@
 
 | File | Change |
 |---|---|
-| `/Users/fenster/dev/declouding/_docs/install.md` | Dropped `--force` from the systemd `ExecReload` line (item 7). The `cliReloader.Reload` in `internal/caddy/reloader.go:38` shells out to `caddy reload --config <path>` with no `--force`; harmonizing the systemd unit with shipped code. |
-| `/Users/fenster/dev/declouding/_docs/usage.md` | Item 8 plus three operator-facing clarifications driven by iter2 behavior changes. |
-| `/Users/fenster/dev/declouding/_ai/decisions/m1-test-strategy.md` | NEW. Item 9 — the missing decision-record file plan-v2 §2.1 and DONE-criterion #10 cite by name. |
-| `/Users/fenster/dev/declouding/_ai/MEMORY.md` | Added the one-line index entry for the new decision memo, matching the existing `decisions/*.md` row format. |
+| `/Users/fenster/dev/decloud/_docs/install.md` | Dropped `--force` from the systemd `ExecReload` line (item 7). The `cliReloader.Reload` in `internal/caddy/reloader.go:38` shells out to `caddy reload --config <path>` with no `--force`; harmonizing the systemd unit with shipped code. |
+| `/Users/fenster/dev/decloud/_docs/usage.md` | Item 8 plus three operator-facing clarifications driven by iter2 behavior changes. |
+| `/Users/fenster/dev/decloud/_ai/decisions/m1-test-strategy.md` | NEW. Item 9 — the missing decision-record file plan-v2 §2.1 and DONE-criterion #10 cite by name. |
+| `/Users/fenster/dev/decloud/_ai/MEMORY.md` | Added the one-line index entry for the new decision memo, matching the existing `decisions/*.md` row format. |
 
 `_docs/` ships as plain markdown (no Next.js build); the `cd _docs && next build` step from Raymond's instruction file does not apply here. Both files render directly on GitHub.
 

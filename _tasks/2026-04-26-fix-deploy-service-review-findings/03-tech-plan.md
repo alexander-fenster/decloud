@@ -46,7 +46,7 @@ I traced every file:line in Don's plan. All match. Specifically:
   is what gets persisted to `config/services/<name>.toml`.
 - `internal/deploy/readiness.go:55` — `fmt.Sprintf("http://%s:%d%s", ip, port, spec.HTTPPath)`.
   `port=0` => `http://<ip>:0/healthz`. Confirmed.
-- `internal/config/paths.go:8` — `const DefaultRoot = "/opt/declouding"` is
+- `internal/config/paths.go:8` — `const DefaultRoot = "/opt/decloud"` is
   exported. Don's "empty string => `config.DefaultRoot`" mapping is exactly
   what `config.NewPaths` does at line 25-27. Same fallback policy.
 
@@ -458,7 +458,7 @@ sneaks `os.MkdirAll(config.RootFromEnv()...)` back in.
 #### Add new `TestInit_EmptyStringRootFallsBackToDefault`
 
 Locks in the empty-string => `DefaultRoot` mapping. We cannot exercise the
-real `/opt/declouding` path from a unit test, so use the stderr-only
+real `/opt/decloud` path from a unit test, so use the stderr-only
 short-circuit to prove `Init("")` does not panic and reaches the empty-string
 branch without crashing.
 
@@ -994,7 +994,7 @@ A successful task ends with all of:
       `internal/registry/`, `cmd/decloud/`, or `_ai/`.
 - [ ] Manual smoke: `decloud --config-root /tmp/X deploy service ...`
       writes logs to `/tmp/X/logs/decloud.log`, never
-      `/opt/declouding/logs/decloud.log`.
+      `/opt/decloud/logs/decloud.log`.
 - [ ] Manual smoke: `decloud deploy service --name foo ./bar` from any
       cwd builds with `-f /abs/path/to/bar/Dockerfile`.
 - [ ] Manual smoke: `decloud deploy service --name foo ./bar` (no

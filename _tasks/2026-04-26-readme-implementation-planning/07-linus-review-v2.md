@@ -63,7 +63,7 @@ For each thing I flagged as "fix if cheap, document if not," check whether they 
 - **Stub Caddyfile defined** — Yes. Joel §7.2 specifies the exact bytes: a `:80 { respond "decloud: no services registered yet" 404 }` stanza. Not just "an empty file" — an actually-valid Caddyfile that gives the operator a clear "system alive but unconfigured" signal on first `curl`. Better than what I asked for. Done.
 - **M3 split into M3a/M3b** — Yes. Don §9 explicitly carves the milestone in two with concrete deliverables for each half. Joel §11 confirms M1 abstractions stay shaped right for both halves. Done.
 - **M1→M4 container rename as explicit M4 deliverable** — Yes. Don §9 elevates it from "flag in code" to a tracked deliverable: *"Explicit M4 deliverable: one-time recreation of all M1-era containers under the new naming convention."* Joel §6.6 closing note repeats it. Done.
-- **`go.mod` (Go 1.22), LICENSE, CI workflow, `_docs/`/`_ai/` targets, `slog` logging** — Yes. Don §10 lists all of them with owners. Joel §10 has a full deliverables table and §9.3 implements the `slog` initializer (JSON to stderr + `/opt/declouding/logs/decloud.log`, with a `DECLOUD_LOG_TO_STDERR_ONLY=1` test escape hatch — nice touch). Done.
+- **`go.mod` (Go 1.22), LICENSE, CI workflow, `_docs/`/`_ai/` targets, `slog` logging** — Yes. Don §10 lists all of them with owners. Joel §10 has a full deliverables table and §9.3 implements the `slog` initializer (JSON to stderr + `/opt/decloud/logs/decloud.log`, with a `DECLOUD_LOG_TO_STDERR_ONLY=1` test escape hatch — nice touch). Done.
 
 Every smaller item from my prior review is addressed with substance.
 
@@ -132,7 +132,7 @@ I read both files end-to-end looking for places where Don says one thing and Joe
 - **The recoverable-state contract in Joel §4.5–§4.7.** "Config without secrets" is now a named, documented, tested state with a defined operator recovery path. That's the right level of rigor for a system that will absolutely have crashes mid-deploy at some point in its life.
 - **Joel §6.6's distinction between "successful initial create that lost its secrets" (preserved as a recoverable signal) and "failed deploy attempt that wrote partial files" (cleaned up to avoid orphan)** is subtle and correct. I would not have caught this distinction on first pass.
 - **Don §10 enumerating the operational deliverables with explicit owners.** Owner column means each one has a name attached; nobody can claim "I didn't know that was mine." Right structure.
-- **The `DECLOUD_LOG_TO_STDERR_ONLY=1` test escape hatch in §9.3.** Tiny detail; means the test suite doesn't write to `/opt/declouding/logs/decloud.log` on the maintainer's machine. The kind of paper cut that catches you on day one of running the test suite if it isn't anticipated.
+- **The `DECLOUD_LOG_TO_STDERR_ONLY=1` test escape hatch in §9.3.** Tiny detail; means the test suite doesn't write to `/opt/decloud/logs/decloud.log` on the maintainer's machine. The kind of paper cut that catches you on day one of running the test suite if it isn't anticipated.
 
 ---
 

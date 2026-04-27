@@ -67,7 +67,7 @@ If you want to know "why a thing is shaped that way," the citations above are th
 Same as v1 except: `internal/deploy/lifecycle.go` and `internal/deploy/lifecycle_test.go` are NEW; `internal/caddy/reloader.go` gains a `Validate` method (no new file).
 
 ```
-declouding/
+decloud/
   go.mod                                          # Rob, step 1: go mod init
   go.sum                                          # generated
   tools.go                                        # Rob, step 1: pins mockgen
@@ -203,7 +203,7 @@ Plain English, no FUD, no legalese.
 ### 4.1 Module init
 
 ```bash
-cd /Users/fenster/dev/declouding
+cd /Users/fenster/dev/decloud
 go mod init github.com/alexander-fenster/decloud
 ```
 
@@ -308,7 +308,7 @@ In `internal/cli/deploy_service.go` (cross-package):
 ### 5.3 Running mockgen
 
 ```bash
-cd /Users/fenster/dev/declouding
+cd /Users/fenster/dev/decloud
 go install go.uber.org/mock/mockgen@v0.4.0
 go generate ./...
 go test ./...
@@ -328,7 +328,7 @@ The cross-package case (`mock_deployer.go`, `mock_lifecycle.go`) uses reflect mo
 
 Specified in prior `06-tech-plan-v2.md` §9.3. v2 unchanged. Two notes for Rob to avoid second-guessing:
 
-- `os.MkdirAll(paths.LogsDir, 0o755)` is correct. `/opt/declouding/logs/` is not in the secrets tree, so 0755 dir + 0644 log file is right.
+- `os.MkdirAll(paths.LogsDir, 0o755)` is correct. `/opt/decloud/logs/` is not in the secrets tree, so 0755 dir + 0644 log file is right.
 - JSON to stderr + log file via `io.MultiWriter`. Test escape hatch via `DECLOUD_LOG_TO_STDERR_ONLY=1`. Logger is `slog.NewJSONHandler` at `slog.LevelInfo`.
 
 Fields the deploy orchestration logs at minimum:
@@ -403,12 +403,12 @@ func NewRootCmd() *cobra.Command {
     rc := &rootContext{}
     root := &cobra.Command{
         Use:           "decloud",
-        Short:         "Declouding: a personal-scale platform-as-a-service",
+        Short:         "Decloud: a personal-scale platform-as-a-service",
         SilenceUsage:  true,
         SilenceErrors: true,
     }
     root.PersistentFlags().StringVar(&rc.ConfigRoot, "config-root", config.RootFromEnv(),
-        "root directory for /opt/declouding-style layout (env: DECLOUD_ROOT)")
+        "root directory for /opt/decloud-style layout (env: DECLOUD_ROOT)")
 
     deploy := &cobra.Command{Use: "deploy", Short: "Deploy a workload"}
     deploy.AddCommand(newDeployServiceCmd(rc))
@@ -1316,7 +1316,7 @@ Exit code mapping in `internal/cli/exit_codes.go`: `errors.Is(err, registry.ErrM
 
 Operator-visible error string:
 ```
-Error: registry: mounts not supported in M1: service "foo" declares 2 mount(s) in /opt/declouding/config/services/foo.toml; mounts are not supported until M3
+Error: registry: mounts not supported in M1: service "foo" declares 2 mount(s) in /opt/decloud/config/services/foo.toml; mounts are not supported until M3
 ```
 
 ### 10.2 Empty array IS accepted
@@ -1717,7 +1717,7 @@ CaddyReload:
 
 - `TestNewPaths_AllPathsRootedCorrectly`
 - `TestRootFromEnv_HonorsDecloudRoot`
-- `TestRootFromEnv_DefaultsToDecloudingPath`
+- `TestRootFromEnv_DefaultsToDecloudPath`
 
 ### 13.11 What we explicitly do NOT test
 
@@ -1781,7 +1781,7 @@ The receipt sits at the top of the report so reviewers don't have to scroll. Rob
 ## Test pass receipt
 
 1. Command run:
-   cd /Users/fenster/dev/declouding && go test ./... -v -count=1 2>&1
+   cd /Users/fenster/dev/decloud && go test ./... -v -count=1 2>&1
 
 2. Go version:
    $ go version

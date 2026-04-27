@@ -1,4 +1,4 @@
-# Instructions for Declouding project
+# Instructions for Decloud project
 
 ## Code style
 

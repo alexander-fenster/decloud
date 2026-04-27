@@ -40,7 +40,7 @@ If you want to know "why a thing is shaped that way," the citations above are th
 
 A. **Unit tests only.** `06-tech-plan-v2.md` §12.2's integration tests are out of scope. No `-tags integration` plumbing in M1. `internal/envcap` runs against real `/bin/bash` but that's a unit test (no Docker, no Caddy, no network).
 
-B. **`go install` is the install path.** No supervisor process exists in M1. The deploy binary is invoked one-shot per operator action. Raymond's installation doc (`_docs/operator/installation.md`) tells the operator to install Docker, install Caddy with its own systemd unit pointing at `/opt/declouding/config/caddy/Caddyfile`, `mkdir -p` the `/opt/declouding/` tree (with `chmod 0700 secrets/`), `docker network create decloud`, then `go install github.com/alexander-fenster/decloud/cmd/decloud@latest`. The implementation Rob writes must match what Raymond will document — pinned constants for the network name, the Caddyfile path, the secrets-dir mode. See §4.
+B. **`go install` is the install path.** No supervisor process exists in M1. The deploy binary is invoked one-shot per operator action. Raymond's installation doc (`_docs/operator/installation.md`) tells the operator to install Docker, install Caddy with its own systemd unit pointing at `/opt/decloud/config/caddy/Caddyfile`, `mkdir -p` the `/opt/decloud/` tree (with `chmod 0700 secrets/`), `docker network create decloud`, then `go install github.com/alexander-fenster/decloud/cmd/decloud@latest`. The implementation Rob writes must match what Raymond will document — pinned constants for the network name, the Caddyfile path, the secrets-dir mode. See §4.
 
 C. **LICENSE and CI workflow are DEFERRED out of M1.** I accept Don's call. Defense in §3.
 
@@ -55,7 +55,7 @@ D. **Don's two questions, answered up front:**
 Kent: this is your test-file checklist. Rob: this is your implementation-file checklist. Every `_test.go` file listed gets created in step 3a (Kent); every `.go` (non-test) file listed gets created in step 3b (Rob), with the exception of `cmd/decloud/main.go` and `go.mod` which are bootstrap.
 
 ```
-declouding/
+decloud/
   go.mod                                          # Rob, step 1: go mod init
   go.sum                                          # generated
   tools.go                                        # Rob, step 1: pins mockgen for `go install` from go.mod
@@ -171,7 +171,7 @@ Confirming Don's calls in `02-plan.md` §3 with my reasoning so Linus has a targ
 | `tools.go` (mockgen pin) | YES | Necessary so `go generate ./...` produces deterministic mocks across machines. See §5. |
 | `LICENSE` (Apache-2.0) | NO — DEFER | Don is right. The user did not ask for a license; the README does not reference one; this is a maintainer call (legal, irreversible). Adding Apache-2.0 by default is a decision I should not make. Adding a LICENSE in a follow-up commit is one line of work, no implementation depends on it. **Confirmed deferred.** |
 | `.github/workflows/test.yml` | NO — DEFER | Don is right. The user did not ask for CI. We have not confirmed a public GitHub repo. Module path `github.com/alexander-fenster/decloud` *implies* a GitHub repo but the maintainer has not said "this is hosted there and CI runs there." Adding a workflow file bakes in GitHub-specific assumptions for zero current benefit. The M1 acceptance gate is `go test ./...` on the maintainer's macOS box (per Don §6.1). Adding CI later is another small task. **Confirmed deferred.** |
-| `slog`-based structured logging | YES | Per Don §3 + prior tech plan §9.3. The `DECLOUD_LOG_TO_STDERR_ONLY=1` test escape hatch is mandatory so unit tests don't write to `/opt/declouding/logs/`. See §6. |
+| `slog`-based structured logging | YES | Per Don §3 + prior tech plan §9.3. The `DECLOUD_LOG_TO_STDERR_ONLY=1` test escape hatch is mandatory so unit tests don't write to `/opt/decloud/logs/`. See §6. |
 | `_docs/` operator + architecture + CLI | YES | Per 02-plan §2.2 and prior tech plan §10. Raymond owns. |
 | `_ai/decisions/m1-test-strategy.md` (new) | YES | Per Don §3. Captures the "unit tests only for M1" directive so future Don doesn't think it was an oversight. Raymond owns. |
 
@@ -184,7 +184,7 @@ If Linus wants to push back on the LICENSE deferral, the substantive argument is
 ### 4.1 Module init
 
 ```bash
-cd /Users/fenster/dev/declouding
+cd /Users/fenster/dev/decloud
 go mod init github.com/alexander-fenster/decloud
 ```
 
@@ -279,7 +279,7 @@ In `internal/cli/deploy_service.go` (the cross-package case):
 ### 5.3 Running mockgen
 
 ```bash
-cd /Users/fenster/dev/declouding
+cd /Users/fenster/dev/decloud
 go install go.uber.org/mock/mockgen@v0.4.0    # one-time per machine; tools.go pins the version
 go generate ./...                              # regenerates every mock
 go test ./...                                  # mocks must compile
@@ -299,7 +299,7 @@ The cross-package case (`mock_deployer.go`) uses reflect mode by necessity — t
 
 Already specified in `06-tech-plan-v2.md` §9.3. One small fix Rob must apply:
 
-The prior plan's `os.MkdirAll(paths.LogsDir, 0o755)` is correct, BUT the `os.OpenFile` for `paths.LogFile` opens with mode `0o644`. That's fine for the log file itself, but the `LogsDir` MUST NOT be `0o755` if it's inside `/opt/declouding/` and the operator wants logs to be readable only by root. Rob checks the README's "Persistence layout" — `/opt/declouding/logs/` is not in the secrets tree, so `0o755` directory + `0o644` file is correct. **No change.** Documenting here so Rob doesn't second-guess.
+The prior plan's `os.MkdirAll(paths.LogsDir, 0o755)` is correct, BUT the `os.OpenFile` for `paths.LogFile` opens with mode `0o644`. That's fine for the log file itself, but the `LogsDir` MUST NOT be `0o755` if it's inside `/opt/decloud/` and the operator wants logs to be readable only by root. Rob checks the README's "Persistence layout" — `/opt/decloud/logs/` is not in the secrets tree, so `0o755` directory + `0o644` file is correct. **No change.** Documenting here so Rob doesn't second-guess.
 
 JSON to stderr + log file via `io.MultiWriter`. Test escape hatch via `DECLOUD_LOG_TO_STDERR_ONLY=1`. Logger is `slog.NewJSONHandler` at `slog.LevelInfo`. Fields the deploy orchestration logs at minimum:
 - `deploy_id` (string, every log line in a deploy carries it)
@@ -372,12 +372,12 @@ func NewRootCmd() *cobra.Command {
     rc := &rootContext{}
     root := &cobra.Command{
         Use:           "decloud",
-        Short:         "Declouding: a personal-scale platform-as-a-service",
+        Short:         "Decloud: a personal-scale platform-as-a-service",
         SilenceUsage:  true,
         SilenceErrors: true, // we print errors ourselves in main.go for exit-code mapping
     }
     root.PersistentFlags().StringVar(&rc.ConfigRoot, "config-root", config.RootFromEnv(),
-        "root directory for /opt/declouding-style layout (env: DECLOUD_ROOT)")
+        "root directory for /opt/decloud-style layout (env: DECLOUD_ROOT)")
 
     deploy := &cobra.Command{Use: "deploy", Short: "Deploy a workload"}
     deploy.AddCommand(newDeployServiceCmd(rc))
@@ -889,7 +889,7 @@ Exit code mapping in `internal/cli/exit_codes.go`: `errors.Is(err, registry.ErrM
 The full operator-visible error string (after `fmt.Errorf` chain unwrap) is:
 
 ```
-Error: registry: mounts not supported in M1: service "foo" declares 2 mount(s) in /opt/declouding/config/services/foo.toml; mounts are not supported until M3
+Error: registry: mounts not supported in M1: service "foo" declares 2 mount(s) in /opt/decloud/config/services/foo.toml; mounts are not supported until M3
 ```
 
 ### 10.2 Empty array IS accepted
@@ -1191,7 +1191,7 @@ Gomock-driven. One test per failure branch, one happy path. Each uses `gomock.In
 
 - `TestNewPaths_AllPathsRootedCorrectly` — table of expected paths.
 - `TestRootFromEnv_HonorsDecloudRoot`.
-- `TestRootFromEnv_DefaultsToDecloudingPath`.
+- `TestRootFromEnv_DefaultsToDecloudPath`.
 
 ### 13.10 What we explicitly do NOT test
 

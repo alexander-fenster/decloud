@@ -147,7 +147,7 @@ workers. **No.** Here's why I checked the M5 plan before signing off.
 `README.md:215` documents `decloud deploy job` as a **separate
 subcommand**. `_ai/decisions/m1-scope.md:32` confirms the milestone
 ordering: M5 = jobs via systemd timers, where the lifecycle is
-"container starts, runs, exits". Jobs in declouding's design do **not**
+"container starts, runs, exits". Jobs in decloud's design do **not**
 have HTTP listeners. They are batch processes. They have no readiness
 probe to skip in the first place — they don't need one because their
 readiness signal is "the container exited 0".
@@ -231,7 +231,7 @@ signature updates.
 - `TestInit_EmptyStringRootFallsBackToDefault` — Joel correctly notes
   this is a weak test (it only proves Init("") doesn't panic). That's
   fine. The full DefaultRoot path can't be exercised in a unit test
-  without writing to `/opt/declouding`, which is a non-starter.
+  without writing to `/opt/decloud`, which is a non-starter.
 - `TestRoot_ConfigRootFlagControlsLogPlacement` — the end-to-end
   regression test. This is the one that would have caught the original
   bug.

@@ -10,18 +10,18 @@
 ### Blockers
 
 **B1. `decloud --help` cannot run on a fresh install.**
-`cmd/decloud/main.go:14-18` calls `logging.Init()` *before* it parses any flag — including `--help`. `logging.Init()` (`internal/logging/logging.go:14-32`) unconditionally `os.MkdirAll(<root>/logs, 0755)`, which fails with `permission denied` against the default `/opt/declouding/logs` until the operator has already done step 4 of `_docs/install.md`. Result: a fresh-install operator runs `decloud --help` per `install.md` §6 and gets `Exit 70: logging init failed: mkdir /opt/declouding: permission denied`. The verify step is broken.
+`cmd/decloud/main.go:14-18` calls `logging.Init()` *before* it parses any flag — including `--help`. `logging.Init()` (`internal/logging/logging.go:14-32`) unconditionally `os.MkdirAll(<root>/logs, 0755)`, which fails with `permission denied` against the default `/opt/decloud/logs` until the operator has already done step 4 of `_docs/install.md`. Result: a fresh-install operator runs `decloud --help` per `install.md` §6 and gets `Exit 70: logging init failed: mkdir /opt/decloud: permission denied`. The verify step is broken.
 
 Reproduction (no env vars):
 ```
 $ ./decloud --help
-logging init failed: mkdir /opt/declouding: permission denied
+logging init failed: mkdir /opt/decloud: permission denied
 exit status 70
 ```
 
 Fix options, in order of preference:
 1. Move `logging.Init()` into a `cobra.Command.PersistentPreRunE` on the root, so `--help` short-circuits before init runs. (Cobra's help/completion subcommands run without PreRunE.)
-2. Make `logging.Init()` fall back to stderr-only when `MkdirAll` returns `EACCES`/`ENOENT`, with a one-line stderr warning. Don't fail-stop the binary because the operator hasn't created `/opt/declouding/logs/` yet.
+2. Make `logging.Init()` fall back to stderr-only when `MkdirAll` returns `EACCES`/`ENOENT`, with a one-line stderr warning. Don't fail-stop the binary because the operator hasn't created `/opt/decloud/logs/` yet.
 3. Defer log-file open until first write.
 
 Either #1 or #2 unblocks the install doc's verify step.
@@ -157,7 +157,7 @@ I verified every flag, default, exit code, state value, format string, and examp
 
 **NEEDS REVISION.**
 
-Two real Blockers (B1: `--help` requires writable `/opt/declouding`; B2: `--env-file` default is fictional) plus two doc hallucinations that ride on those Blockers. Fix the code; the docs follow without rewrites. Suggestions S1-S7 are quality-of-life and can wait for an M1.x cleanup pass.
+Two real Blockers (B1: `--help` requires writable `/opt/decloud`; B2: `--env-file` default is fictional) plus two doc hallucinations that ride on those Blockers. Fix the code; the docs follow without rewrites. Suggestions S1-S7 are quality-of-life and can wait for an M1.x cleanup pass.
 
 **Top 3 issues:**
 1. **B1** — `decloud --help` fails on fresh installs (`logging.Init` mkdir).

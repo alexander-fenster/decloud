@@ -43,7 +43,7 @@
 //
 // DECLOUD_LOG_TO_STDERR_ONLY=1 is the deterministic test escape hatch and
 // short-circuits before any filesystem access. The new EACCES fallback is
-// for the operator-fresh-box case where /opt/declouding/logs/ does not yet
+// for the operator-fresh-box case where /opt/decloud/logs/ does not yet
 // exist; tests that need to assert "no FS access at all" must keep using
 // the env var.
 func Init() error {
@@ -112,7 +112,7 @@ Cobra's built-in `--help` and `help` subcommand short-circuit before `Persistent
 
 | Path | Before | After |
 |---|---|---|
-| `decloud --help` on fresh box | Exit 70 (`ExitInternal`) — `mkdir /opt/declouding: permission denied` | Exit 0; Cobra prints help; no FS access. |
+| `decloud --help` on fresh box | Exit 70 (`ExitInternal`) — `mkdir /opt/decloud: permission denied` | Exit 0; Cobra prints help; no FS access. |
 | `decloud deploy service ...` on fresh box | Exit 70 before any deploy logic | One stderr warning, then proceeds with stderr-only logging; deploy continues. |
 | `DECLOUD_LOG_TO_STDERR_ONLY=1` set | Exit 0, stderr-only | Identical. (Short-circuit unchanged.) |
 | Catastrophic slog failure | n/a — slog ctors never fail today | Future-proofed: `Init` keeps `error` return. |
@@ -687,8 +687,8 @@ None. No existing test asserts the inner-error chain is broken (they all `errors
 #### Exact change
 
 ```diff
--ExecReload=/usr/bin/caddy reload --config /opt/declouding/config/caddy/Caddyfile --adapter caddyfile --force
-+ExecReload=/usr/bin/caddy reload --config /opt/declouding/config/caddy/Caddyfile --adapter caddyfile
+-ExecReload=/usr/bin/caddy reload --config /opt/decloud/config/caddy/Caddyfile --adapter caddyfile --force
++ExecReload=/usr/bin/caddy reload --config /opt/decloud/config/caddy/Caddyfile --adapter caddyfile
 ```
 
 **Rationale (Don's call):** harmonize with `internal/caddy/reloader.go:38-48` which does NOT pass `--force`. Both reload paths now use the same flag set. `--force` is for first-load edge cases only and isn't needed during steady-state systemctl reloads (the Caddyfile validates clean at deploy time per the deployer's `Reloader.Validate` step).

@@ -16,7 +16,7 @@ func NewRootCmd() *cobra.Command {
 	rc := &rootContext{}
 	root := &cobra.Command{
 		Use:           "decloud",
-		Short:         "Declouding: a personal-scale platform-as-a-service",
+		Short:         "Decloud: a personal-scale platform-as-a-service",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -24,7 +24,7 @@ func NewRootCmd() *cobra.Command {
 		},
 	}
 	root.PersistentFlags().StringVar(&rc.ConfigRoot, "config-root", config.RootFromEnv(),
-		"root directory for /opt/declouding-style layout (env: DECLOUD_ROOT)")
+		"root directory for /opt/decloud-style layout (env: DECLOUD_ROOT)")
 
 	deploy := &cobra.Command{Use: "deploy", Short: "Deploy a workload"}
 	deploy.AddCommand(newDeployServiceCmd(rc))

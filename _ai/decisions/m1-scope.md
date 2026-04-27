@@ -25,7 +25,7 @@ Downtime is intentional in M1; flipping to blue/green is M4's whole point. Docum
 
 ## First-deploy Caddyfile bootstrap
 
-If `/opt/declouding/config/caddy/Caddyfile` doesn't exist when first deploy runs, deployer writes a minimal valid stanza (`:80 { respond "decloud: no services registered yet" 404 }`) before invoking `caddy reload`. Avoids the operator's pre-installed `caddy run --config <path>` crashing on missing file. Bytes-exact stub; not just "an empty file" because Caddy v2 has historically been "accept but warn" on empty configs and we want a clear "alive but unconfigured" signal on first `curl`.
+If `/opt/decloud/config/caddy/Caddyfile` doesn't exist when first deploy runs, deployer writes a minimal valid stanza (`:80 { respond "decloud: no services registered yet" 404 }`) before invoking `caddy reload`. Avoids the operator's pre-installed `caddy run --config <path>` crashing on missing file. Bytes-exact stub; not just "an empty file" because Caddy v2 has historically been "accept but warn" on empty configs and we want a clear "alive but unconfigured" signal on first `curl`.
 
 ## Milestone sequence (M1 → M7)
 

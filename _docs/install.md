@@ -1,6 +1,6 @@
 # Installation
 
-Server-side installation for Declouding M1. The target is a single Linux server (Ubuntu LTS or Debian assumed; other distros work where Docker and Caddy do, but the systemd snippets below assume systemd). Operator runs every step over SSH as root or via `sudo`.
+Server-side installation for Decloud M1. The target is a single Linux server (Ubuntu LTS or Debian assumed; other distros work where Docker and Caddy do, but the systemd snippets below assume systemd). Operator runs every step over SSH as root or via `sudo`.
 
 There is no `decloud` daemon in M1. The `decloud` binary is a one-shot CLI that the operator invokes ad hoc; it owns no background process, no listening port, and no host service unit. Container supervision is delegated to Docker via `--restart=unless-stopped`.
 
@@ -25,7 +25,7 @@ docker run --rm hello-world
 
 ## 3. Install Caddy
 
-Follow the official Caddy install instructions: <https://caddyserver.com/docs/install>. After installing the package, you must give Caddy its own systemd unit pointing at the Declouding-managed Caddyfile. Do not enable the default `caddy.service` that ships with the package.
+Follow the official Caddy install instructions: <https://caddyserver.com/docs/install>. After installing the package, you must give Caddy its own systemd unit pointing at the Decloud-managed Caddyfile. Do not enable the default `caddy.service` that ships with the package.
 
 Create `/etc/systemd/system/caddy.service`:
 
@@ -39,8 +39,8 @@ Wants=network-online.target
 [Service]
 User=caddy
 Group=caddy
-ExecStart=/usr/bin/caddy run --environ --config /opt/declouding/config/caddy/Caddyfile --adapter caddyfile
-ExecReload=/usr/bin/caddy reload --config /opt/declouding/config/caddy/Caddyfile --adapter caddyfile
+ExecStart=/usr/bin/caddy run --environ --config /opt/decloud/config/caddy/Caddyfile --adapter caddyfile
+ExecReload=/usr/bin/caddy reload --config /opt/decloud/config/caddy/Caddyfile --adapter caddyfile
 TimeoutStopSec=5s
 LimitNOFILE=1048576
 PrivateTmp=true
@@ -62,34 +62,34 @@ Caddy will fail to start until the Caddyfile exists. The first `decloud deploy s
 
 The `caddy` binary must be on the operator's `PATH`. The deployer invokes `caddy validate` before every reload; if `which caddy` fails, deploys fail at exit code 60 (`ExitCaddyReloadFail`).
 
-## 4. Create the `/opt/declouding/` tree
+## 4. Create the `/opt/decloud/` tree
 
-Declouding keeps all persistent state in one directory so a single backup path covers everything that matters. Create it with these exact modes:
+Decloud keeps all persistent state in one directory so a single backup path covers everything that matters. Create it with these exact modes:
 
 ```sh
-mkdir -p /opt/declouding/config/services
-mkdir -p /opt/declouding/config/jobs
-mkdir -p /opt/declouding/config/caddy
-mkdir -p /opt/declouding/secrets
-mkdir -p /opt/declouding/state/deploys
-mkdir -p /opt/declouding/logs
+mkdir -p /opt/decloud/config/services
+mkdir -p /opt/decloud/config/jobs
+mkdir -p /opt/decloud/config/caddy
+mkdir -p /opt/decloud/secrets
+mkdir -p /opt/decloud/state/deploys
+mkdir -p /opt/decloud/logs
 
-chmod 0755 /opt/declouding
-chmod 0755 /opt/declouding/config
-chmod 0755 /opt/declouding/config/services
-chmod 0755 /opt/declouding/config/jobs
-chmod 0755 /opt/declouding/config/caddy
-chmod 0700 /opt/declouding/secrets
-chmod 0755 /opt/declouding/state
-chmod 0755 /opt/declouding/state/deploys
-chmod 0755 /opt/declouding/logs
+chmod 0755 /opt/decloud
+chmod 0755 /opt/decloud/config
+chmod 0755 /opt/decloud/config/services
+chmod 0755 /opt/decloud/config/jobs
+chmod 0755 /opt/decloud/config/caddy
+chmod 0700 /opt/decloud/secrets
+chmod 0755 /opt/decloud/state
+chmod 0755 /opt/decloud/state/deploys
+chmod 0755 /opt/decloud/logs
 ```
 
 `secrets/` must be `0700`. Per-service secrets files are written `0600` inside it; the registry's loader rejects the service if the modes are wrong.
 
 `state/deploys/` is created here but no M1 code populates it. M2 will write source bundles there for backup.
 
-To use a different root, set `DECLOUD_ROOT=/some/other/path` in the operator's environment or pass `--config-root` on every invocation. The default is `/opt/declouding`.
+To use a different root, set `DECLOUD_ROOT=/some/other/path` in the operator's environment or pass `--config-root` on every invocation. The default is `/opt/decloud`.
 
 ## 5. Create the shared Docker network
 
@@ -124,7 +124,7 @@ Verify the install:
 decloud --help
 ```
 
-The output must list `caddy`, `deploy`, `logs`, `restart`, `start`, `status`, `stop`, and `unregister` subcommands. There is no `decloud daemon`, no `decloud bootstrap`, and no `systemctl enable decloud` — M1 deliberately ships no host service for Declouding itself.
+The output must list `caddy`, `deploy`, `logs`, `restart`, `start`, `status`, `stop`, and `unregister` subcommands. There is no `decloud daemon`, no `decloud bootstrap`, and no `systemctl enable decloud` — M1 deliberately ships no host service for Decloud itself.
 
 ## 7. License
 

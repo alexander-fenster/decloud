@@ -15,12 +15,12 @@ Read the README as a contract, not an essay. Stripped to obligations, it specifi
   - **Client** (laptop): package a source tree, push it over SSH to the server, proxy stdio, exit with the remote exit code. That is its entire job.
   - **Server-side** (host): the real CLI — `deploy`, `unregister`, `start`, `stop`, `restart`, `status`, `logs`, `caddy reload`, `backup {run,list,restore}`, `gc`.
 - **Two workload types:** services (long-running containers, optional Caddy-routed hostnames) and jobs (containers run by systemd timers, exit on completion).
-- **Persistence layout** rooted at `/opt/declouding/{config,secrets,state,logs}` so a single `restic` snapshot covers everything.
+- **Persistence layout** rooted at `/opt/decloud/{config,secrets,state,logs}` so a single `restic` snapshot covers everything.
 - **Caddy** as the only ingress. Caddyfile on disk is the persisted source of truth, regenerated from registrations and reloaded; hot-path upstream swaps go through Caddy's admin API.
 - **Deploy lifecycle**: build → start new container on shared Docker network → wait for readiness (HEALTHCHECK or HTTP probe) → flip Caddy upstream via admin API → SIGTERM old, grace period, SIGKILL. Default strategy `blue/green`; `recreate` for services with exclusive resources.
 - **Env model**: `env.sh` is sourced at deploy time; resulting environment is captured and persisted with the registration, then injected at `docker run`. Never baked into the image.
 - **Mounts**: explicit host→container file/dir mounts, declared at deploy time, mostly read-only secret files (e.g. Google service account JSON).
-- **Backups**: nightly `restic` to S3-compatible storage of `/opt/declouding/`, all declared service volumes, and Caddy's ACME data dir. Repo password lives off-host.
+- **Backups**: nightly `restic` to S3-compatible storage of `/opt/decloud/`, all declared service volumes, and Caddy's ACME data dir. Repo password lives off-host.
 - **Image GC**: weekly `docker system prune -a --filter until=168h` and `docker builder prune --filter until=168h`, plus `decloud gc` on demand.
 
 **Things the README explicitly does NOT promise** (Non-Goals section): autoscaling, scale-to-zero, prebuilt-image deploys, web UI, public management API, multi-node, K8s compat, full Cloud Run parity, per-service host systemd units for long-running services. Hold the line on these — every one of them is a tar pit.
@@ -33,7 +33,7 @@ The README leaves two open:
 2. **Whether logs need aggregation beyond `docker logs` / `journalctl`.**
 
 **Verdict for M1:**
-- (1) **MUST be resolved before M1 ships.** Every later milestone reads/writes this metadata. CLAUDE.md already mandates TOML for configuration files. Combine that with the README's "understandable over SSH in plain files" principle and the answer is **TOML, one file per service under `/opt/declouding/config/services/<name>.toml`, one file per job under `.../jobs/<name>.toml`**. Joel: write this into the tech plan as a decision, not an open question. Schema versioned with a top-level `schema_version` integer from day one — when (not if) we change the shape, we want the loader to refuse old files cleanly instead of silently mis-parsing.
+- (1) **MUST be resolved before M1 ships.** Every later milestone reads/writes this metadata. CLAUDE.md already mandates TOML for configuration files. Combine that with the README's "understandable over SSH in plain files" principle and the answer is **TOML, one file per service under `/opt/decloud/config/services/<name>.toml`, one file per job under `.../jobs/<name>.toml`**. Joel: write this into the tech plan as a decision, not an open question. Schema versioned with a top-level `schema_version` integer from day one — when (not if) we change the shape, we want the loader to refuse old files cleanly instead of silently mis-parsing.
 - (2) **DEFER.** `docker logs` and `journalctl -u <job>` are sufficient for M1 and most likely forever. Revisit only when a real workload demands it.
 
 ## 3. The brutal call: what gets built first
@@ -58,7 +58,7 @@ Acceptance: on a fresh Ubuntu LTS host with Docker, Caddy, and the `decloud` ser
 
 1. `cd` into a directory containing a `Dockerfile` and an `env.sh`.
 2. Run `decloud deploy service --name foo --host foo.example.com --port 8080 --readiness http:/healthz` (exact flag shape is Joel's to nail down — keep it short).
-3. The command sources `env.sh`, captures the resulting env, builds the image (`decloud-foo:<deploy-id>`), writes `/opt/declouding/config/services/foo.toml`, starts the container on the shared Docker network with the captured env injected, polls the readiness probe, regenerates the Caddyfile from all registered services, runs `caddy reload`, and on success returns 0.
+3. The command sources `env.sh`, captures the resulting env, builds the image (`decloud-foo:<deploy-id>`), writes `/opt/decloud/config/services/foo.toml`, starts the container on the shared Docker network with the captured env injected, polls the readiness probe, regenerates the Caddyfile from all registered services, runs `caddy reload`, and on success returns 0.
 4. `curl https://foo.example.com/` works, served by Caddy with a real Let's Encrypt cert (assuming DNS is pointed correctly — DNS is operator's job per README).
 5. `decloud status foo` and `decloud logs foo` return useful output.
 6. `decloud stop foo` / `decloud start foo` / `decloud restart foo` / `decloud unregister foo` all behave per their names. `unregister` removes the registration, removes the container, regenerates the Caddyfile, reloads.
@@ -74,7 +74,7 @@ Cut these or we do not ship this year:
 - **No image GC.** M6.
 - **No host bootstrap script.** Manual install for M1. M2.
 - **No persistent volumes.** M1 services are stateless. Mount declarations come in M3 alongside the env/secret-file machinery; the Caddy/lifecycle path in M1 should be designed to accommodate them but not implement them.
-- **No restart-on-crash supervisor.** Use Docker's own `--restart=unless-stopped`. The README's "host-level Declouding supervisor" can wait — Docker already does the boring 90% of this.
+- **No restart-on-crash supervisor.** Use Docker's own `--restart=unless-stopped`. The README's "host-level Decloud supervisor" can wait — Docker already does the boring 90% of this.
 
 ### Risks to flag at M1
 
@@ -90,19 +90,19 @@ Each milestone is a shippable increment. Do not start the next one until the pre
 
 - **M1 — Service deploy MVP (server-side, recreate strategy).** Defined in detail above. The bedrock. Everything else is built on the registry, the Caddyfile generator, and the container lifecycle code that lands here.
 
-- **M2 — Host bootstrap.** A `decloud bootstrap` subcommand (or a separate small script — Joel decides) that on a fresh Ubuntu host: installs Docker and Caddy from their official repos, creates the `/opt/declouding/` directory tree with correct permissions, creates the shared Docker network, installs and enables the single Declouding host systemd unit (which exists mostly to own the supervisor process and to be a stable place for the platform to live across reboots), and verifies the install by deploying a built-in trivial "hello" service. Acceptance: a clean cloud VM is fully usable by the operator within one command + DNS setup.
+- **M2 — Host bootstrap.** A `decloud bootstrap` subcommand (or a separate small script — Joel decides) that on a fresh Ubuntu host: installs Docker and Caddy from their official repos, creates the `/opt/decloud/` directory tree with correct permissions, creates the shared Docker network, installs and enables the single Decloud host systemd unit (which exists mostly to own the supervisor process and to be a stable place for the platform to live across reboots), and verifies the install by deploying a built-in trivial "hello" service. Acceptance: a clean cloud VM is fully usable by the operator within one command + DNS setup.
 
 - **M3 — Client binary + env/mounts/secrets feature-complete.** Two threads, parallelizable:
   - The `decloud` client: package source tree honoring `.dockerignore`, upload via `ssh` (probably `tar | ssh host decloud deploy service --stdin ...`), proxy stdio, exit with remote exit code. Distributed via `go install`.
-  - Server-side: full env-capture from `env.sh` (was minimally working in M1, now hardened with edge-case tests), mounted-file declarations with secrets stored under `/opt/declouding/secrets/<service>/` mode 0600, and explicit volume mount declarations in the TOML schema. `schema_version` bumps to 2.
+  - Server-side: full env-capture from `env.sh` (was minimally working in M1, now hardened with edge-case tests), mounted-file declarations with secrets stored under `/opt/decloud/secrets/<service>/` mode 0600, and explicit volume mount declarations in the TOML schema. `schema_version` bumps to 2.
 
 - **M4 — Zero-downtime blue/green deploy via Caddy admin API.** Replace M1's recreate-everything with the real lifecycle: build → start new on shared network with a generated container name → poll readiness (HEALTHCHECK or HTTP probe) → PATCH Caddy admin API to swap upstream → SIGTERM old, grace period, SIGKILL, remove. Add the `strategy = "recreate"` opt-out for services with exclusive resources. Regenerate the on-disk Caddyfile after every deploy so the persisted source of truth stays accurate even though the hot path went through the admin API; on Caddy restart it reloads from disk and converges. Rollback on readiness failure: kill new, leave old.
 
 - **M5 — Jobs.** `decloud deploy job` (client) and the server-side machinery: per-job `<name>.timer` and `<name>.service` systemd units written to `/etc/systemd/system/`, where the `.service` is a oneshot that invokes `decloud run-job <name>` which launches the container with the registered image/env/mounts. `decloud unregister <name>` understands jobs too: stop/disable/remove the timer and service unit, `systemctl daemon-reload`. Status/logs work via `systemctl list-timers` and `journalctl -u`.
 
-- **M6 — Backups + image housekeeping.** Install `restic` during bootstrap (retroactively update M2). Write a `decloud-backup.timer` + `.service` pair that runs `decloud backup run` nightly. `decloud backup run` invokes `restic backup` against `/opt/declouding/` plus all volumes discovered from registrations plus Caddy's ACME data dir; repo URL and password come from a host-side config file (NOT from the backed-up secrets dir — chicken and egg). `decloud backup list` and `decloud backup restore` are thin wrappers over `restic`. Independently: a `decloud-gc.timer` runs `decloud gc` weekly, which shells out to `docker system prune -a --filter until=168h` and `docker builder prune --filter until=168h`. `decloud gc` runs the same on demand.
+- **M6 — Backups + image housekeeping.** Install `restic` during bootstrap (retroactively update M2). Write a `decloud-backup.timer` + `.service` pair that runs `decloud backup run` nightly. `decloud backup run` invokes `restic backup` against `/opt/decloud/` plus all volumes discovered from registrations plus Caddy's ACME data dir; repo URL and password come from a host-side config file (NOT from the backed-up secrets dir — chicken and egg). `decloud backup list` and `decloud backup restore` are thin wrappers over `restic`. Independently: a `decloud-gc.timer` runs `decloud gc` weekly, which shells out to `docker system prune -a --filter until=168h` and `docker builder prune --filter until=168h`. `decloud gc` runs the same on demand.
 
-- **M7 — Operational polish.** Anything that genuinely emerged as missing during M1–M6 use. Candidates, in priority order: per-service deploy lock, crash-budget auto-revert, the Declouding host-level supervisor (if Docker's `--restart=unless-stopped` proved insufficient), better `decloud status` output, optional log aggregation if (1) was wrong and we actually need it. Resist scope creep. Anything that smells like a Non-Goal from the README gets killed on sight.
+- **M7 — Operational polish.** Anything that genuinely emerged as missing during M1–M6 use. Candidates, in priority order: per-service deploy lock, crash-budget auto-revert, the Decloud host-level supervisor (if Docker's `--restart=unless-stopped` proved insufficient), better `decloud status` output, optional log aggregation if (1) was wrong and we actually need it. Resist scope creep. Anything that smells like a Non-Goal from the README gets killed on sight.
 
 ## 5. What I want from Joel and Linus
 

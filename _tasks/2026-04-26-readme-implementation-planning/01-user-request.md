@@ -7,10 +7,10 @@
 ```
 5786304 docs: add initial CLAUDE.md
 997bcbc docs: expanded README
-54ceed9 docs: document declouding platform direction
+54ceed9 docs: document decloud platform direction
 ```
 
-The README has just been finalized as the design spec for the Declouding platform — a single-host, Docker + Caddy + systemd-timers replacement for a small set of Cloud Run / host-systemd / Cloud Scheduler workloads, driven by a `decloud` CLI over SSH. CLAUDE.md fixes the implementation language as Go with Cobra/Viper/TOML/Testify/Gomock and mandates the subagent workflow.
+The README has just been finalized as the design spec for the Decloud platform — a single-host, Docker + Caddy + systemd-timers replacement for a small set of Cloud Run / host-systemd / Cloud Scheduler workloads, driven by a `decloud` CLI over SSH. CLAUDE.md fixes the implementation language as Go with Cobra/Viper/TOML/Testify/Gomock and mandates the subagent workflow.
 
 ## Verbatim request
 

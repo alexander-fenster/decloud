@@ -24,10 +24,10 @@ cmd.Flags().IntVar(&f.Port, "port", 0, "container listen port (required if --hos
 
 This is the only occurrence of the string `"container listen port"` (or
 `"required if --host set"`) anywhere under
-`/Users/fenster/dev/declouding/internal/`,
-`/Users/fenster/dev/declouding/cmd/`,
-`/Users/fenster/dev/declouding/_docs/`, or
-`/Users/fenster/dev/declouding/_ai/`. Old occurrences in
+`/Users/fenster/dev/decloud/internal/`,
+`/Users/fenster/dev/decloud/cmd/`,
+`/Users/fenster/dev/decloud/_docs/`, or
+`/Users/fenster/dev/decloud/_ai/`. Old occurrences in
 `_tasks/2026-04-26-m1-implementation/{03-tech-plan.md,06-tech-plan-v2.md}`
 are historical task records — those are immutable and correctly should
 not be touched. The new task's review files (`08-kevlin-review.md`,
@@ -92,7 +92,7 @@ Trivial. Recording for completeness because that is what tech plans do.
 
 ### Exact change
 
-File: `/Users/fenster/dev/declouding/internal/cli/deploy_service.go`
+File: `/Users/fenster/dev/decloud/internal/cli/deploy_service.go`
 Line: 55
 
 Replace:

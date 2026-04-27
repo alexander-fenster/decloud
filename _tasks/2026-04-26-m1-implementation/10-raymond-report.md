@@ -7,8 +7,8 @@
 
 ## Files created
 
-- `/Users/fenster/dev/declouding/_docs/install.md` — server-side installation. Prereqs, Docker install (link to upstream), Caddy install with the systemd unit drop-in pointing at `/opt/declouding/config/caddy/Caddyfile`, the `/opt/declouding/` tree with exact modes, `docker network create decloud`, `go install` of the binary, license-not-yet sentence, verify step. Explicitly notes: no `decloud` daemon, no `systemctl enable decloud`, the operator runs `decloud` ad hoc over SSH.
-- `/Users/fenster/dev/declouding/_docs/usage.md` — operator usage. Quick start, `decloud deploy service` with the full flag table, exit codes 0/2/10/20/30/40/50/60/70, one-paragraph reference for each of the seven lifecycle commands (`unregister`, `start`, `stop`, `restart`, `status`, `logs`, `caddy reload`), the `<name> state=... container=... deploy=... deployed_at=<RFC3339>` status format with the four state values (`running`, `stopped`, `absent`, `config-only`), an end-to-end example (deploy → status → logs → rollback by re-deploying previous source → unregister), the `docker exec -it decloud-<name> sh` debug paragraph, the `caddy reload` recovery paragraph, and the warning that `decloud caddy reload` regenerates from registry and discards manual Caddyfile edits.
+- `/Users/fenster/dev/decloud/_docs/install.md` — server-side installation. Prereqs, Docker install (link to upstream), Caddy install with the systemd unit drop-in pointing at `/opt/decloud/config/caddy/Caddyfile`, the `/opt/decloud/` tree with exact modes, `docker network create decloud`, `go install` of the binary, license-not-yet sentence, verify step. Explicitly notes: no `decloud` daemon, no `systemctl enable decloud`, the operator runs `decloud` ad hoc over SSH.
+- `/Users/fenster/dev/decloud/_docs/usage.md` — operator usage. Quick start, `decloud deploy service` with the full flag table, exit codes 0/2/10/20/30/40/50/60/70, one-paragraph reference for each of the seven lifecycle commands (`unregister`, `start`, `stop`, `restart`, `status`, `logs`, `caddy reload`), the `<name> state=... container=... deploy=... deployed_at=<RFC3339>` status format with the four state values (`running`, `stopped`, `absent`, `config-only`), an end-to-end example (deploy → status → logs → rollback by re-deploying previous source → unregister), the `docker exec -it decloud-<name> sh` debug paragraph, the `caddy reload` recovery paragraph, and the warning that `decloud caddy reload` regenerates from registry and discards manual Caddyfile edits.
 
 CLAUDE.md mentions a Next.js documentation app under `_docs/`; in this repo `_docs/` does not exist yet. Don's plan §3 (and Joel's tech plan) explicitly call for plain markdown under `_docs/`. I wrote plain markdown. The `_docs/operator/` subdirectory the plans named was simplified to flat `_docs/install.md` and `_docs/usage.md` per Don's §9 "Raymond's call on document structure; content is what matters."
 
@@ -21,7 +21,7 @@ CLAUDE.md mentions a Next.js documentation app under `_docs/`; in this repo `_do
 - `ContainerName` is `decloud-<name>` per `internal/ids/ids.go`.
 - Deploy ID format is `YYYYMMDD-HHMMSS-XXXXXX` (six-hex suffix) per `internal/ids/ids.go` — fixed my example after first writing a wrong one.
 - Default flag values: `--readiness-path=/healthz`, `--readiness-timeout=60s`, `--strategy=recreate`, `--dockerfile=Dockerfile`. Verified against the binary.
-- Path layout from `internal/config/paths.go`: `/opt/declouding/{config/{services,jobs,caddy},secrets,state/deploys,logs}` with `Caddyfile` at `config/caddy/Caddyfile`.
+- Path layout from `internal/config/paths.go`: `/opt/decloud/{config/{services,jobs,caddy},secrets,state/deploys,logs}` with `Caddyfile` at `config/caddy/Caddyfile`.
 
 ## Things I deliberately did NOT document (per plan §2.2.2)
 

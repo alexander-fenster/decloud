@@ -22,9 +22,9 @@ Two new constraints from the user that override sections of the approved tech pl
 - `_tasks/2026-04-26-readme-implementation-planning/05-plan-v2.md` — Don's M1 scope and rationale.
 - `_tasks/2026-04-26-readme-implementation-planning/06-tech-plan-v2.md` — Joel's full M1 tech plan (type shapes, exact loader semantics, capture mechanism).
 - `_tasks/2026-04-26-readme-implementation-planning/07-linus-review-v2.md` — Linus's approval; flagged borderline-but-not-blocker edge cases on env capture (set +a, arrays, readonly).
-- `/Users/fenster/dev/declouding/CLAUDE.md` — workflow + conventions (Cobra, Viper, Testify, Gomock, gofmt, no obvious comments).
-- `/Users/fenster/dev/declouding/README.md` — system spec.
-- `/Users/fenster/dev/declouding/_ai/MEMORY.md` and the files it indexes (`m1-scope.md`, `secrets-split.md`, `schema-versioning.md`, `envcap-portable-bash.md`, `container-naming.md`).
+- `/Users/fenster/dev/decloud/CLAUDE.md` — workflow + conventions (Cobra, Viper, Testify, Gomock, gofmt, no obvious comments).
+- `/Users/fenster/dev/decloud/README.md` — system spec.
+- `/Users/fenster/dev/decloud/_ai/MEMORY.md` and the files it indexes (`m1-scope.md`, `secrets-split.md`, `schema-versioning.md`, `envcap-portable-bash.md`, `container-naming.md`).
 
 ## Out of scope
 

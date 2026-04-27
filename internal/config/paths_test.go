@@ -33,11 +33,11 @@ func TestNewPaths_EmptyRootFallsBackToDefault(t *testing.T) {
 }
 
 func TestRootFromEnv_HonorsDecloudRoot(t *testing.T) {
-	t.Setenv("DECLOUD_ROOT", "/tmp/declouding-test-x")
-	assert.Equal(t, "/tmp/declouding-test-x", config.RootFromEnv())
+	t.Setenv("DECLOUD_ROOT", "/tmp/decloud-test-x")
+	assert.Equal(t, "/tmp/decloud-test-x", config.RootFromEnv())
 }
 
-func TestRootFromEnv_DefaultsToDecloudingPath(t *testing.T) {
+func TestRootFromEnv_DefaultsToDecloudPath(t *testing.T) {
 	t.Setenv("DECLOUD_ROOT", "")
 	assert.Equal(t, config.DefaultRoot, config.RootFromEnv())
 }

@@ -27,7 +27,7 @@ registry/Caddy paths, but logging still hardcodes `config.RootFromEnv()`.
   default root
 
 In practice, `decloud --config-root /tmp/testroot ...` will write state under
-`/tmp/testroot` but try to write logs under `/opt/declouding/logs` (or the env root),
+`/tmp/testroot` but try to write logs under `/opt/decloud/logs` (or the env root),
 which is an inconsistent and surprising split.
 
 ### 3. Medium: deploy without --port can only fail at runtime

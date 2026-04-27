@@ -28,7 +28,7 @@
 
 ## Item 6 site-by-site verification
 
-`grep -rn '%w: %v' /Users/fenster/dev/declouding/internal` returns **zero matches** after the patch. The 21 sites Joel enumerated:
+`grep -rn '%w: %v' /Users/fenster/dev/decloud/internal` returns **zero matches** after the patch. The 21 sites Joel enumerated:
 
 - `service.go`: lines 135 (ErrEnvCapture, subsumed by Item 2 rewrite), 156 (ErrBuild), 166 (ErrRun stop-prev), 171 (ErrRun remove-prev), 188 (ErrRun run-new), 211 (ErrReadiness), 300 (ErrCaddyReload generate), 304 (ErrCaddyReload validate), 307 (ErrCaddyReload rename), 310 (ErrCaddyReload reload).
 - `readiness.go`: line 61 (ErrReadiness, subsumed by Item 5 rewrite).
@@ -117,7 +117,7 @@ The only modified tracked file is `_tasks/current`, which is the bureau task poi
 
 ## Subtle behavior changes Raymond/Linus need to know
 
-1. **Logging warning leaks to test stderr.** With `PersistentPreRunE → logging.Init`, every CLI test run prints `decloud: log dir unavailable, using stderr only: mkdir /opt/declouding: permission denied` to **`os.Stderr`** (not the Cobra-redirected stderr). This is cosmetic test noise — no test asserts stderr-cleanliness — but Raymond should mention in the test-strategy doc that `DECLOUD_LOG_TO_STDERR_ONLY=1` is the canonical way to silence the warning when running tests locally.
+1. **Logging warning leaks to test stderr.** With `PersistentPreRunE → logging.Init`, every CLI test run prints `decloud: log dir unavailable, using stderr only: mkdir /opt/decloud: permission denied` to **`os.Stderr`** (not the Cobra-redirected stderr). This is cosmetic test noise — no test asserts stderr-cleanliness — but Raymond should mention in the test-strategy doc that `DECLOUD_LOG_TO_STDERR_ONLY=1` is the canonical way to silence the warning when running tests locally.
 
 2. **`Capture("")` is now `(nil, nil)` defensively.** Per Joel decision #3, the orchestrator never passes `""` in production (the new `if envFile != ""` guard makes sure of it). If a future caller passes `""`, they get nil instead of a stat error. This is a deliberate safety net; production behavior is identical.
 

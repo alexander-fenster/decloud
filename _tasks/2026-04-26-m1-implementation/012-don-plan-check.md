@@ -20,11 +20,11 @@ The good news: every blocker is small, surgical, and identified. One-iteration f
 
 **RULING: BLOCKER. Fix this round.**
 
-I confirmed by reading `cmd/decloud/main.go:14-18` and `internal/logging/logging.go:14-32`. `Init()` runs unconditionally before `cli.NewRootCmd().ExecuteContext()` parses flags. The first thing the install doc tells the operator to do (`_docs/install.md` §6) is `decloud --help`. That fails with `Exit 70: mkdir /opt/declouding: permission denied` on a fresh, root-less install where `/opt/declouding/` doesn't exist yet. This invalidates the install doc's verify step and breaks the operator's first-touch experience. NOT acceptable.
+I confirmed by reading `cmd/decloud/main.go:14-18` and `internal/logging/logging.go:14-32`. `Init()` runs unconditionally before `cli.NewRootCmd().ExecuteContext()` parses flags. The first thing the install doc tells the operator to do (`_docs/install.md` §6) is `decloud --help`. That fails with `Exit 70: mkdir /opt/decloud: permission denied` on a fresh, root-less install where `/opt/decloud/` doesn't exist yet. This invalidates the install doc's verify step and breaks the operator's first-touch experience. NOT acceptable.
 
 **Decision on fix approach:** Combine BOTH options Kevlin offered, prefer #2 (graceful fallback) as the primary fix:
 
-1. **Primary fix — graceful fallback in `logging.Init()`:** if `os.MkdirAll(logsDir, 0o755)` returns a permission/not-exist error, log one warning line to stderr ("logs dir unavailable, using stderr only: <err>") and configure stderr-only slog handler. Return nil. The binary works regardless of `/opt/declouding/` state.
+1. **Primary fix — graceful fallback in `logging.Init()`:** if `os.MkdirAll(logsDir, 0o755)` returns a permission/not-exist error, log one warning line to stderr ("logs dir unavailable, using stderr only: <err>") and configure stderr-only slog handler. Return nil. The binary works regardless of `/opt/decloud/` state.
 2. **Belt-and-suspenders — defer init in PersistentPreRunE:** wrap `logging.Init()` in a `cobra.Command.PersistentPreRunE` on the root command so help/completion paths don't even attempt init. Cobra's `--help` and `help` subcommand short-circuit before PreRunE runs.
 
 Both changes together close the failure mode whether the operator hits `--help`, `--version`, or actual subcommands on a half-bootstrapped box.
@@ -163,7 +163,7 @@ For Joel to expand into tech-plan-v3 and Rob to implement:
 
 When Step 2-redux fires next time, ALL of these must be true for M1 to ship:
 
-1. `decloud --help` runs cleanly on a box where `/opt/declouding/` does not exist (verified by new test + manual smoke).
+1. `decloud --help` runs cleanly on a box where `/opt/decloud/` does not exist (verified by new test + manual smoke).
 2. `decloud deploy service --name x --host y.example.com --port 8080 ./src` works when `./src/env.sh` exists (auto-discovered) AND when it doesn't (env.sh truly optional).
 3. `decloud deploy service` calls `Driver.NetworkEnsure(ctx, "decloud")` before `Build` — verified by `TestDeploy_StepZeroEnsuresDecloudNetwork` with `gomock.InOrder`.
 4. No exported symbol contains `_ForTest` or `ForTest` suffix.

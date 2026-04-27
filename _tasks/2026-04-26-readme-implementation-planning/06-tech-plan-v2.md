@@ -18,7 +18,7 @@ For reviewers tracking what changed since v1. Everything not in this list is unc
 - **Stub Caddyfile on first deploy (Don §7.1, Linus smaller-issues).** If `config/caddy/Caddyfile` does not exist, the deployer writes a minimal valid file before invoking `caddy reload`, so the operator's pre-installed Caddy systemd unit doesn't crash on a missing config.
 - **Viper deferred to M2 (Don §8).** `internal/cli/` uses plain Cobra plus `os.Getenv("DECLOUD_ROOT")` for `--config-root`. `internal/config/` exists and holds path constants but does not import Viper. M2 retrofits.
 - **Cache sentinel dropped (Don §6).** No `cache/docker-network-created`. Just call `docker network inspect ... || docker network create ...` every deploy.
-- **M1 operational deliverables added (Don §10).** `go.mod` with `go 1.22`, LICENSE, `.github/workflows/test.yml`, `_docs/` and `_ai/` targets, `slog`-based structured logging to stderr + `/opt/declouding/logs/decloud.log`. All called out in §11 below.
+- **M1 operational deliverables added (Don §10).** `go.mod` with `go 1.22`, LICENSE, `.github/workflows/test.yml`, `_docs/` and `_ai/` targets, `slog`-based structured logging to stderr + `/opt/decloud/logs/decloud.log`. All called out in §11 below.
 - **M3 subdivision noted (Don §9).** M3a (server-side mounts/secret-files/env hardening) and M3b (client binary). Not an M1 deliverable; mentioned only so the abstractions in M1 stay shaped right.
 - **M1→M4 container-rename migration noted (Don §9).** Explicit M4 deliverable, not a comment in code. M1 uses `decloud-<name>`; M4 will recreate them as `decloud-<name>-<deploy-id>`.
 
@@ -28,7 +28,7 @@ Everything else from `03-tech-plan.md` stands.
 
 ## 1. Spec (unchanged from v1, restated for self-containedness)
 
-> An operator who is SSH'd into a host that already has Docker, Caddy, and the `decloud` server binary installed — and who has a directory containing a `Dockerfile` and an `env.sh` — can run **one** `decloud deploy service` command, and at the end of that command (a) the container is running on a shared Docker network, (b) `/opt/declouding/config/services/<name>.toml` exists and is parseable by the same binary, (c) `/opt/declouding/secrets/<name>/env.toml` exists with mode 0600 in a 0700 directory and contains the captured env, (d) `/opt/declouding/config/caddy/Caddyfile` has been generated (or stubbed on first deploy) and `caddy reload` has succeeded, (e) `curl https://<host>/` reaches the container with a real Let's Encrypt cert (DNS permitting), and (f) the same binary's `status`, `logs`, `start`, `stop`, `restart`, and `unregister` subcommands operate on that service. Strategy is `recreate` only. Exit code is 0 on success, non-zero with a specific exit code per failure class on failure (see §6.4).
+> An operator who is SSH'd into a host that already has Docker, Caddy, and the `decloud` server binary installed — and who has a directory containing a `Dockerfile` and an `env.sh` — can run **one** `decloud deploy service` command, and at the end of that command (a) the container is running on a shared Docker network, (b) `/opt/decloud/config/services/<name>.toml` exists and is parseable by the same binary, (c) `/opt/decloud/secrets/<name>/env.toml` exists with mode 0600 in a 0700 directory and contains the captured env, (d) `/opt/decloud/config/caddy/Caddyfile` has been generated (or stubbed on first deploy) and `caddy reload` has succeeded, (e) `curl https://<host>/` reaches the container with a real Let's Encrypt cert (DNS permitting), and (f) the same binary's `status`, `logs`, `start`, `stop`, `restart`, and `unregister` subcommands operate on that service. Strategy is `recreate` only. Exit code is 0 on success, non-zero with a specific exit code per failure class on failure (see §6.4).
 
 That is the contract. Everything below serves it.
 
@@ -45,7 +45,7 @@ github.com/alexander-fenster/decloud
 ### 2.2 Directory tree
 
 ```
-declouding/
+decloud/
   go.mod                              # go 1.22 directive
   go.sum
   LICENSE                             # Apache-2.0 (maintainer's call; default Apache-2.0)
@@ -69,7 +69,7 @@ declouding/
       exit_codes.go                   # ExitCodeFor(err) error -> int mapping
     config/                           # process-level paths; NO Viper in M1 (deferred to M2)
       paths.go                        # Paths struct: ConfigDir, SecretsDir, StateDir, LogsDir, CaddyfilePath; built from a single root
-    logging/                          # slog setup: stderr + /opt/declouding/logs/decloud.log
+    logging/                          # slog setup: stderr + /opt/decloud/logs/decloud.log
       logging.go
     registry/                         # service registration TOML I/O + state (TWO-FILE)
       types.go                        # ServiceConfig, ServiceSecrets, Service (merged), schema_version
@@ -140,7 +140,7 @@ func main() {
 }
 ```
 
-`logging.Init()` opens `/opt/declouding/logs/decloud.log` for append (creating parents if missing), sets `slog.SetDefault` to a `slog.NewJSONHandler` that fans out to both stderr and the file via a tiny `io.MultiWriter`. Failure to open the log file is fatal in production; in tests `Init()` honors a `DECLOUD_LOG_TO_STDERR_ONLY=1` short-circuit.
+`logging.Init()` opens `/opt/decloud/logs/decloud.log` for append (creating parents if missing), sets `slog.SetDefault` to a `slog.NewJSONHandler` that fans out to both stderr and the file via a tiny `io.MultiWriter`. Failure to open the log file is fatal in production; in tests `Init()` honors a `DECLOUD_LOG_TO_STDERR_ONLY=1` short-circuit.
 
 ---
 
@@ -184,7 +184,7 @@ line3
 -----END-----
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 PLAIN_NO_EXPORT=hello_world
-PWD=/Users/fenster/dev/declouding
+PWD=/Users/fenster/dev/decloud
 SHLVL=1
 UNICODE_VAL=héllo wörld
 ```
@@ -355,8 +355,8 @@ CI matrix: Linux + macOS both run `go test ./internal/envcap/...` on every PR. *
 
 Per service `<name>`:
 
-- `/opt/declouding/config/services/<name>.toml` — root:root, mode **0644**, world-readable. Holds operational metadata (build, run, routes, readiness, state). Safe to inspect, safe to git-mirror in the future.
-- `/opt/declouding/secrets/<name>/env.toml` — root:root, mode **0600**, in a directory at mode **0700**. Holds the captured env from `env.sh`. Never world-readable.
+- `/opt/decloud/config/services/<name>.toml` — root:root, mode **0644**, world-readable. Holds operational metadata (build, run, routes, readiness, state). Safe to inspect, safe to git-mirror in the future.
+- `/opt/decloud/secrets/<name>/env.toml` — root:root, mode **0600**, in a directory at mode **0700**. Holds the captured env from `env.sh`. Never world-readable.
 
 Both files declare the same `schema_version`; the loader rejects mismatches.
 
@@ -370,7 +370,7 @@ package registry
 const CurrentSchemaVersion = 1
 
 // ServiceConfig is the on-disk non-secret half. Persisted at
-// /opt/declouding/config/services/<Name>.toml, mode 0644.
+// /opt/decloud/config/services/<Name>.toml, mode 0644.
 type ServiceConfig struct {
     SchemaVersion int    `toml:"schema_version"`
     Name          string `toml:"name"`
@@ -386,7 +386,7 @@ type ServiceConfig struct {
 }
 
 // ServiceSecrets is the on-disk secret half. Persisted at
-// /opt/declouding/secrets/<Name>/env.toml, mode 0600 in a 0700 dir.
+// /opt/decloud/secrets/<Name>/env.toml, mode 0600 in a 0700 dir.
 type ServiceSecrets struct {
     SchemaVersion int               `toml:"schema_version"`
     Name          string            `toml:"name"` // sanity-check match with config
@@ -656,7 +656,7 @@ decloud deploy service [flags] <source-dir>
 | `--readiness-timeout` | duration | no | `60s` | Total wait. |
 | `--strategy` | string | no | `recreate` | Only `recreate` accepted in M1. |
 | `--dockerfile` | string | no | `Dockerfile` | Relative to `<source-dir>`. |
-| `--config-root` | string | no | `os.Getenv("DECLOUD_ROOT")` else `/opt/declouding` | **No Viper.** Plain Cobra `StringVar` with the default computed from env. |
+| `--config-root` | string | no | `os.Getenv("DECLOUD_ROOT")` else `/opt/decloud` | **No Viper.** Plain Cobra `StringVar` with the default computed from env. |
 
 ### 6.3 Positional arg
 
@@ -687,7 +687,7 @@ const (
 - `docker build` log: stdout, live-streamed.
 - Progress lines (`==> sourcing env.sh`, `==> building image ...`, `==> waiting for readiness`, `==> reloading caddy`, `==> deploy succeeded in 47s`): stderr.
 - Errors: stderr.
-- Structured `slog` JSON: stderr AND `/opt/declouding/logs/decloud.log` (per §11).
+- Structured `slog` JSON: stderr AND `/opt/decloud/logs/decloud.log` (per §11).
 
 ### 6.6 Behavior on partial failure (recreate strategy)
 
@@ -819,7 +819,7 @@ import (
     "path/filepath"
 )
 
-const DefaultRoot = "/opt/declouding"
+const DefaultRoot = "/opt/decloud"
 
 type Paths struct {
     Root          string
@@ -875,11 +875,11 @@ func NewRootCmd() *cobra.Command {
     var configRoot string
     root := &cobra.Command{
         Use:   "decloud",
-        Short: "Declouding: a personal-scale platform-as-a-service",
+        Short: "Decloud: a personal-scale platform-as-a-service",
         SilenceUsage: true,
     }
     root.PersistentFlags().StringVar(&configRoot, "config-root", config.RootFromEnv(),
-        "root directory for /opt/declouding-style layout (env: DECLOUD_ROOT)")
+        "root directory for /opt/decloud-style layout (env: DECLOUD_ROOT)")
     deploy := &cobra.Command{Use: "deploy", Short: "Deploy a workload"}
     deploy.AddCommand(newDeployServiceCmd(&configRoot))
     root.AddCommand(deploy)
@@ -931,7 +931,7 @@ func Init() error {
 }
 ```
 
-JSON format. Tests set `DECLOUD_LOG_TO_STDERR_ONLY=1` so they don't write to the real `/opt/declouding/`. M2's bootstrap installs a logrotate config for the file.
+JSON format. Tests set `DECLOUD_LOG_TO_STDERR_ONLY=1` so they don't write to the real `/opt/decloud/`. M2's bootstrap installs a logrotate config for the file.
 
 ---
 
@@ -947,11 +947,11 @@ Per Don plan-v2 §10. These are not "technically interesting" — they are easy 
 | `_docs/cli/decloud-deploy-service.md` | Raymond | Operator-facing reference for the M1 command. |
 | `_docs/architecture/m1-recreate-strategy.md` | Raymond | Why M1 is recreate-only; how to know when blue/green lands (M4). |
 | `_docs/architecture/secrets-layout.md` | Raymond | The §4 split, why, how to inspect (with `sudo cat`). |
-| `_docs/operator/manual-install.md` | Raymond | Manual Docker + Caddy + decloud install steps; the Caddy systemd unit pointing at `/opt/declouding/config/caddy/Caddyfile`; the directory tree to pre-create. |
+| `_docs/operator/manual-install.md` | Raymond | Manual Docker + Caddy + decloud install steps; the Caddy systemd unit pointing at `/opt/decloud/config/caddy/Caddyfile`; the directory tree to pre-create. |
 | `_ai/decisions/m1-scope.md` | Raymond | Summarizes Don's plan-v2. |
 | `_ai/decisions/secrets-split.md` | Raymond | Captures §4 + the rejected alternatives. |
 | `_ai/decisions/schema-versioning.md` | Raymond | Captures §5. |
-| Structured logging via `log/slog` | Rob | Per §9.3. JSON to stderr + `/opt/declouding/logs/decloud.log`. Logrotate is M2. |
+| Structured logging via `log/slog` | Rob | Per §9.3. JSON to stderr + `/opt/decloud/logs/decloud.log`. Logrotate is M2. |
 
 ---
 
@@ -1014,7 +1014,7 @@ Per CLAUDE.md item 4 (no change-detector tests):
 
 ### 13.2 Permission drift on secrets
 
-If something on the host (a misguided cleanup script, an operator running `chmod -R` carelessly) changes `/opt/declouding/secrets/<name>/env.toml` to 0644, the loader refuses to load with `ErrPermissionMode`. The deployer surfaces "secrets file has wrong permissions; refusing to load; fix with `chmod 600 <path> && chmod 700 <dir>` and re-run." We do not silently fix because that hides the audit signal.
+If something on the host (a misguided cleanup script, an operator running `chmod -R` carelessly) changes `/opt/decloud/secrets/<name>/env.toml` to 0644, the loader refuses to load with `ErrPermissionMode`. The deployer surfaces "secrets file has wrong permissions; refusing to load; fix with `chmod 600 <path> && chmod 700 <dir>` and re-run." We do not silently fix because that hides the audit signal.
 
 ### 13.3 Bash version drift
 
@@ -1026,7 +1026,7 @@ If someone replaced `/bin/bash` with `rbash` or some restricted shell that disab
 
 ### 13.5 Caddy not running when reload is invoked
 
-If the operator's pre-installed Caddy systemd unit isn't running, `caddy reload --config <path>` fails. The deployer surfaces "caddy reload failed; ensure caddy is running; check /opt/declouding/config/caddy/Caddyfile." Exit `ExitCaddyReloadFail`. The new container is up and Docker DNS routes work; only Caddy ingress is degraded. Operator fixes their systemd.
+If the operator's pre-installed Caddy systemd unit isn't running, `caddy reload --config <path>` fails. The deployer surfaces "caddy reload failed; ensure caddy is running; check /opt/decloud/config/caddy/Caddyfile." Exit `ExitCaddyReloadFail`. The new container is up and Docker DNS routes work; only Caddy ingress is degraded. Operator fixes their systemd.
 
 ### 13.6 `docker network inspect` not idempotent
 

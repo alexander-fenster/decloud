@@ -257,7 +257,7 @@ plan promised.
 4. **The pre-existing "log dir unavailable" warnings during `internal/cli`
    tests are now reduced.** Tests that route through the production
    `PersistentPreRunE` now mkdir under a `t.TempDir()` (via `--config-root`)
-   instead of trying to mkdir `/opt/declouding`. Some warnings remain
+   instead of trying to mkdir `/opt/decloud`. Some warnings remain
    from tests that don't pass `--config-root` and don't set
    `DECLOUD_LOG_TO_STDERR_ONLY=1` — those continue to fall back to
    stderr-only as before. No behavior change; just a cosmetic improvement

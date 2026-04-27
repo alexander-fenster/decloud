@@ -1,6 +1,6 @@
 # _ai library index
 
-Tactical reference for the Declouding codebase. Each file is a dense decision record or a non-obvious gotcha. Keep entries one-line where possible; point at code or task files for detail rather than re-explaining.
+Tactical reference for the Decloud codebase. Each file is a dense decision record or a non-obvious gotcha. Keep entries one-line where possible; point at code or task files for detail rather than re-explaining.
 
 ## Architecture decisions
 

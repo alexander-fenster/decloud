@@ -4,7 +4,7 @@ When a function consumes a value that the caller has already resolved (a root di
 
 ## The bug class this prevents
 
-Two callers on the same machine (or one caller and one test) read different values of the "same" config because one of them lives in code that does its own env-var read. The original bug: `--config-root /tmp/X` set state under `/tmp/X` but `logging.Init()` re-read `DECLOUD_ROOT` and wrote logs under `/opt/declouding`. One config knob, two sources of truth, surprising split — see `_tasks/2026-04-26-fix-deploy-service-review-findings/01-user-request.md` Finding 2.
+Two callers on the same machine (or one caller and one test) read different values of the "same" config because one of them lives in code that does its own env-var read. The original bug: `--config-root /tmp/X` set state under `/tmp/X` but `logging.Init()` re-read `DECLOUD_ROOT` and wrote logs under `/opt/decloud`. One config knob, two sources of truth, surprising split — see `_tasks/2026-04-26-fix-deploy-service-review-findings/01-user-request.md` Finding 2.
 
 ## Recipe
 

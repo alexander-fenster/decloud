@@ -165,7 +165,7 @@ The existing tests pass the root via `t.Setenv("DECLOUD_ROOT", root)` and call
   Locks in that the env var is no longer consulted by `Init`.
 - **`TestInit_EmptyStringRootFallsBackToDefault`** — call `logging.Init("")`
   with `DECLOUD_LOG_TO_STDERR_ONLY=1`. Must not panic, must succeed. (We
-  cannot assert writes to `/opt/declouding` from a unit test; the
+  cannot assert writes to `/opt/decloud` from a unit test; the
   short-circuit is enough to prove the empty-string branch is reached
   without crashing.)
 - Update the existing four tests to pass `root` as an argument.
@@ -334,7 +334,7 @@ So nobody wastes cycles asking later:
 - New tests fail before Rob's changes and pass after — Kent must
   demonstrate this in his report.
 - `decloud --config-root /tmp/X deploy service ...` writes logs to
-  `/tmp/X/logs/decloud.log`, never to `/opt/declouding/logs/decloud.log`,
+  `/tmp/X/logs/decloud.log`, never to `/opt/decloud/logs/decloud.log`,
   unless `DECLOUD_LOG_TO_STDERR_ONLY=1`.
 - `decloud deploy service --name foo ./bar` from any cwd builds with
   `-f /abs/path/to/bar/Dockerfile`, not with `-f Dockerfile`.

@@ -1,14 +1,14 @@
 # Usage
 
-Operator-facing reference for the Declouding M1 CLI. For host setup, see [`install.md`](./install.md).
+Operator-facing reference for the Decloud M1 CLI. For host setup, see [`install.md`](./install.md).
 
-Every command runs on the host that owns `/opt/declouding/`. The operator either SSHes in and runs `decloud` directly, or runs it through some other transport — Declouding does not care. There is no client binary in M1.
+Every command runs on the host that owns `/opt/decloud/`. The operator either SSHes in and runs `decloud` directly, or runs it through some other transport — Decloud does not care. There is no client binary in M1.
 
 ## 1. Quick start
 
-A service is a directory containing a `Dockerfile` and, optionally, an `env.sh` script. Declouding builds the image from that directory, captures the environment your `env.sh` exports (if present), and runs the resulting container.
+A service is a directory containing a `Dockerfile` and, optionally, an `env.sh` script. Decloud builds the image from that directory, captures the environment your `env.sh` exports (if present), and runs the resulting container.
 
-If you do not pass `--env-file`, Declouding looks for `<source-dir>/env.sh` and uses it if it exists; if it does not, the container runs with no captured environment. Passing `--env-file=<path>` to a missing file is a hard error (exit 10) — auto-discovery is silent, but explicit asks must succeed.
+If you do not pass `--env-file`, Decloud looks for `<source-dir>/env.sh` and uses it if it exists; if it does not, the container runs with no captured environment. Passing `--env-file=<path>` to a missing file is a hard error (exit 10) — auto-discovery is silent, but explicit asks must succeed.
 
 A minimal example. Suppose `./myservice/` contains:
 
@@ -63,7 +63,7 @@ decloud deploy service [flags] <source-dir>
 | `--strategy` | string | `recreate` | no | Only `recreate` is accepted in M1. `blue_green` is rejected with exit 10 (M4). |
 | `--dockerfile` | string | `Dockerfile` | no | Path to the Dockerfile. Relative paths resolve under `<source-dir>` regardless of the cwd you invoke `decloud` from. Absolute paths are used as-is. |
 | `--mount` | string (repeatable) | none | no | Rejected with exit 10 in M1. Persistent volumes are M3. |
-| `--config-root` | string | `$DECLOUD_ROOT` or `/opt/declouding` | no | Root directory of the Declouding tree. Persistent flag, applies to every subcommand. Logs are written to `<config-root>/logs/decloud.log` (the flag controls log placement as well as registry/Caddy paths). |
+| `--config-root` | string | `$DECLOUD_ROOT` or `/opt/decloud` | no | Root directory of the Decloud tree. Persistent flag, applies to every subcommand. Logs are written to `<config-root>/logs/decloud.log` (the flag controls log placement as well as registry/Caddy paths). |
 
 The `env.sh` model. The script is sourced inside a hermetic `bash` invocation; whatever it `export`s ends up in the container's environment, never baked into the image. Arbitrary shell is allowed — computed values, conditional exports, subshell calls. The script is re-evaluated only at deploy time, so restarts are fast and reproducible. Borderline cases worth knowing:
 
@@ -79,7 +79,7 @@ What the deploy actually does, in order:
 3. Stop and remove any previous container for this service.
 4. Run the new container on the `decloud` network.
 5. Wait for `GET <readiness-path>` to return `200 OK` from the host (probing the container's bridge IP directly; ports are not published to the host).
-6. Persist the service registration to `/opt/declouding/config/services/<name>.toml` and `/opt/declouding/secrets/<name>/env.toml`.
+6. Persist the service registration to `/opt/decloud/config/services/<name>.toml` and `/opt/decloud/secrets/<name>/env.toml`.
 7. Regenerate the Caddyfile, run `caddy validate` against a temporary file, atomically rename it into place, and ask Caddy to reload.
 
 If any step fails, the deploy aborts, surfaces a non-zero exit code, and does what it can to leave the system in a coherent state. `caddy validate` runs before the rename, so a syntactically broken Caddyfile cannot reach disk; the previous Caddyfile is preserved and Caddy keeps serving.
@@ -108,7 +108,7 @@ All seven ship in M1. Each takes `--config-root` as the only persistent flag.
 - `decloud restart <name>` — stop, then start. Reuses the same container; does not rebuild. To recreate from source, run `deploy service` again.
 - `decloud status <name>` — runtime state plus registry view. Output is one line.
 - `decloud logs <name> [-f] [--tail N]` — pass-through to `docker logs`. `-f` follows; `--tail N` shows the last N lines (`0` means all).
-- `decloud caddy reload` — regenerate the Caddyfile from the registry, validate it, atomic-rename it into place, and tell Caddy to reload. Use this if you edited something out of band and need Caddy back in sync with the registry. **Warning:** this regenerates from registry state and discards any manual edits to `/opt/declouding/config/caddy/Caddyfile`. Edit the registry, not the Caddyfile.
+- `decloud caddy reload` — regenerate the Caddyfile from the registry, validate it, atomic-rename it into place, and tell Caddy to reload. Use this if you edited something out of band and need Caddy back in sync with the registry. **Warning:** this regenerates from registry state and discards any manual edits to `/opt/decloud/config/caddy/Caddyfile`. Edit the registry, not the Caddyfile.
 
 ### Status format
 
@@ -157,7 +157,7 @@ $ decloud logs myservice --tail 50 -f
 ...
 ```
 
-Roll back. Declouding does not keep an image archive in M1; you roll back by re-deploying a previous source revision:
+Roll back. Decloud does not keep an image archive in M1; you roll back by re-deploying a previous source revision:
 
 ```sh
 $ git -C ./myservice checkout <previous-sha>
@@ -179,7 +179,7 @@ $ decloud unregister myservice
 
 ## 6. Debugging a container directly
 
-Declouding deliberately does not publish container ports to the host (`docker run -p ...` is never invoked). Caddy is the only public ingress, and it reaches each container by name over the shared `decloud` Docker network. The readiness probe reaches containers the same way, via their bridge IP.
+Decloud deliberately does not publish container ports to the host (`docker run -p ...` is never invoked). Caddy is the only public ingress, and it reaches each container by name over the shared `decloud` Docker network. The readiness probe reaches containers the same way, via their bridge IP.
 
 If you need to probe a container directly from the host — for example, the readiness probe is failing and you want to bypass Caddy — use `docker exec`:
 

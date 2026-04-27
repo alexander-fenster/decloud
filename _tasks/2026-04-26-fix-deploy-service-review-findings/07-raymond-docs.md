@@ -95,13 +95,13 @@ which rows changed; I executed that.
 **Before:**
 
 ```
-| `--config-root` | string | `$DECLOUD_ROOT` or `/opt/declouding` | no | Root directory of the Declouding tree. Persistent flag, applies to every subcommand. |
+| `--config-root` | string | `$DECLOUD_ROOT` or `/opt/decloud` | no | Root directory of the Decloud tree. Persistent flag, applies to every subcommand. |
 ```
 
 **After:**
 
 ```
-| `--config-root` | string | `$DECLOUD_ROOT` or `/opt/declouding` | no | Root directory of the Declouding tree. Persistent flag, applies to every subcommand. Logs are written to `<config-root>/logs/decloud.log` (the flag controls log placement as well as registry/Caddy paths). |
+| `--config-root` | string | `$DECLOUD_ROOT` or `/opt/decloud` | no | Root directory of the Decloud tree. Persistent flag, applies to every subcommand. Logs are written to `<config-root>/logs/decloud.log` (the flag controls log placement as well as registry/Caddy paths). |
 ```
 
 **Citations:**
@@ -127,7 +127,7 @@ which rows changed; I executed that.
   `--port` rejection fits cleanly under that bucket. No new exit code,
   no row change.
 - `§5 End-to-end example` already passes `--port 8080`. No edit needed.
-- Section §1 prose framing (env.sh discovery, "Declouding does not keep
+- Section §1 prose framing (env.sh discovery, "Decloud does not keep
   an image archive", etc.) is unrelated to these three findings.
 
 ---
