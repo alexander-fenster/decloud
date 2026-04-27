@@ -56,14 +56,14 @@ decloud deploy service [flags] <source-dir>
 |---|---|---|---|---|
 | `--name` | string | — | yes | Service name. Must match `[a-z][a-z0-9-]{0,38}`. |
 | `--host` | string (repeatable) | none | no | Public hostname. Repeat for multiple. Caddy obtains a certificate per host. |
-| `--port` | int | `0` | only if `--host` is set | Container's listen port. |
+| `--port` | int | — | yes | Container's listen port. Required because every M1 service is HTTP and the readiness probe targets this port; missing or `0` fails fast with exit 2 (`--port is required`). Worker/job workloads without an HTTP listener are M5. |
 | `--env-file` | string | `<source-dir>/env.sh` if present | no | Path to a bash script whose `export`s become the container's environment. Omitted: auto-discovers `<source-dir>/env.sh`; missing is fine (deploy proceeds with no captured env). Set explicitly: file must exist or the deploy fails with exit 10. |
 | `--readiness-path` | string | `/healthz` | no | HTTP path probed for `200 OK` after the container starts. |
 | `--readiness-timeout` | duration | `60s` | no | Total wait before the deploy fails with exit 50. |
 | `--strategy` | string | `recreate` | no | Only `recreate` is accepted in M1. `blue_green` is rejected with exit 10 (M4). |
-| `--dockerfile` | string | `Dockerfile` | no | Path to the Dockerfile, relative to `<source-dir>`. |
+| `--dockerfile` | string | `Dockerfile` | no | Path to the Dockerfile. Relative paths resolve under `<source-dir>` regardless of the cwd you invoke `decloud` from. Absolute paths are used as-is. |
 | `--mount` | string (repeatable) | none | no | Rejected with exit 10 in M1. Persistent volumes are M3. |
-| `--config-root` | string | `$DECLOUD_ROOT` or `/opt/declouding` | no | Root directory of the Declouding tree. Persistent flag, applies to every subcommand. |
+| `--config-root` | string | `$DECLOUD_ROOT` or `/opt/declouding` | no | Root directory of the Declouding tree. Persistent flag, applies to every subcommand. Logs are written to `<config-root>/logs/decloud.log` (the flag controls log placement as well as registry/Caddy paths). |
 
 The `env.sh` model. The script is sourced inside a hermetic `bash` invocation; whatever it `export`s ends up in the container's environment, never baked into the image. Arbitrary shell is allowed — computed values, conditional exports, subshell calls. The script is re-evaluated only at deploy time, so restarts are fast and reproducible. Borderline cases worth knowing:
 

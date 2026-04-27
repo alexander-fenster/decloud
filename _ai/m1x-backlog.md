@@ -44,7 +44,7 @@ Five items punted out of M1 with explicit Don/Linus sign-off. Each was a non-blo
 
 ## 5. Logging warning leaks to test stderr; consider a quiet-mode env var
 
-**Where:** `internal/logging/logging.go:29` and `:36` — `decloud: log dir unavailable, using stderr only: ...` fires once per CLI test that doesn't set `DECLOUD_LOG_TO_STDERR_ONLY=1`. Cosmetic; no test asserts stderr cleanliness, no test fails.
+**Where:** `internal/logging/logging.go:32` and `:39` — `decloud: log dir unavailable, using stderr only: ...` fires once per CLI test that doesn't set `DECLOUD_LOG_TO_STDERR_ONLY=1` (and doesn't pass a writable `--config-root`). Mostly cosmetic; no test asserts stderr cleanliness, no test fails. After the `Init(root string)` change in `_tasks/2026-04-26-fix-deploy-service-review-findings/`, tests that pass `--config-root <t.TempDir()>` no longer trip the warning, so the noise is reduced but not gone.
 
 **Why deferred:** Workaround already documented in `_ai/decisions/m1-test-strategy.md` §5. Strictly bikeshed.
 

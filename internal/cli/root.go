@@ -20,7 +20,7 @@ func NewRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			return logging.Init()
+			return logging.Init(rc.ConfigRoot)
 		},
 	}
 	root.PersistentFlags().StringVar(&rc.ConfigRoot, "config-root", config.RootFromEnv(),

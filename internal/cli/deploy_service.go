@@ -52,7 +52,7 @@ func newDeployServiceCmd(rc *rootContext) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&f.Name, "name", "", "service name (required, [a-z][a-z0-9-]{0,38})")
 	cmd.Flags().StringSliceVar(&f.Hosts, "host", nil, "public hostname(s); repeatable")
-	cmd.Flags().IntVar(&f.Port, "port", 0, "container listen port (required if --host set)")
+	cmd.Flags().IntVar(&f.Port, "port", 0, "container listen port (required)")
 	cmd.Flags().StringVar(&f.EnvFile, "env-file", "", "path to env.sh (default: <source-dir>/env.sh if present)")
 	cmd.Flags().StringSliceVar(&f.Mounts, "mount", nil, "M1: rejected with ExitConfigError (M3 only)")
 	cmd.Flags().StringVar(&f.ReadinessPath, "readiness-path", "/healthz", "HTTP readiness path")
@@ -70,12 +70,19 @@ func runDeployService(ctx context.Context, rc *rootContext, f *deployServiceFlag
 	if f.Strategy != "recreate" {
 		return fmt.Errorf("--strategy=%q: only \"recreate\" is supported in M1: %w", f.Strategy, registry.ErrInvalidStrategy)
 	}
-	if len(f.Hosts) > 0 && f.Port == 0 {
-		return fmt.Errorf("--port is required when --host is set: %w", errUsage)
+	if f.Port == 0 {
+		return fmt.Errorf("--port is required: %w", errUsage)
 	}
 	abs, err := filepath.Abs(sourceDir)
 	if err != nil {
 		return fmt.Errorf("resolving source-dir: %w", err)
+	}
+	dockerfile := f.Dockerfile
+	if dockerfile == "" {
+		dockerfile = "Dockerfile"
+	}
+	if !filepath.IsAbs(dockerfile) {
+		dockerfile = filepath.Join(abs, dockerfile)
 	}
 	envFile, err := resolveEnvFile(f.EnvFile, abs)
 	if err != nil {
@@ -85,7 +92,7 @@ func runDeployService(ctx context.Context, rc *rootContext, f *deployServiceFlag
 	req := deploy.Request{
 		Name:             f.Name,
 		SourceDir:        abs,
-		Dockerfile:       f.Dockerfile,
+		Dockerfile:       dockerfile,
 		Hosts:            f.Hosts,
 		Port:             f.Port,
 		EnvFile:          envFile,

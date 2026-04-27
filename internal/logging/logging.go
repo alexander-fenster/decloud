@@ -11,19 +11,22 @@ import (
 )
 
 // Init configures the default slog handler. JSON output goes to stderr and,
-// when filesystem access permits, also to <root>/logs/decloud.log. If the
-// log directory cannot be created OR the log file cannot be opened, Init
-// falls back to stderr-only and emits one warning line to stderr describing
-// the cause.
+// when filesystem access permits, also to <root>/logs/decloud.log. If root
+// is the empty string, config.DefaultRoot is used (matching config.NewPaths
+// semantics). If the log directory cannot be created OR the log file cannot
+// be opened, Init falls back to stderr-only and emits one warning line to
+// stderr describing the cause.
 //
 // DECLOUD_LOG_TO_STDERR_ONLY=1 short-circuits before any filesystem access
 // and is the deterministic test escape hatch.
-func Init() error {
+func Init(root string) error {
 	if os.Getenv("DECLOUD_LOG_TO_STDERR_ONLY") == "1" {
 		setStderrOnly()
 		return nil
 	}
-	root := config.RootFromEnv()
+	if root == "" {
+		root = config.DefaultRoot
+	}
 	logsDir := filepath.Join(root, "logs")
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "decloud: log dir unavailable, using stderr only: %v\n", err)

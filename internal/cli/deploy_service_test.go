@@ -125,7 +125,11 @@ func TestDeployService_DefaultStrategyIsRecreate(t *testing.T) {
 			return nil
 		})
 
-	_, _, err := runRoot(t, "deploy", "service", "--name", "foo", "/srv/foo")
+	_, _, err := runRoot(t, "deploy", "service",
+		"--name", "foo",
+		"--port", "8080",
+		"/srv/foo",
+	)
 	require.NoError(t, err)
 	assert.Equal(t, "recreate", got.Strategy)
 }
@@ -143,7 +147,11 @@ func TestDeployService_AutoDiscoversEnvSh(t *testing.T) {
 	envSh := filepath.Join(sourceDir, "env.sh")
 	require.NoError(t, os.WriteFile(envSh, []byte("export X=1\n"), 0o644))
 
-	_, _, err := runRoot(t, "deploy", "service", "--name", "foo", sourceDir)
+	_, _, err := runRoot(t, "deploy", "service",
+		"--name", "foo",
+		"--port", "8080",
+		sourceDir,
+	)
 	require.NoError(t, err)
 	assert.Equal(t, envSh, got.EnvFile)
 }
@@ -159,7 +167,11 @@ func TestDeployService_NoEnvShIsValid(t *testing.T) {
 
 	sourceDir := t.TempDir()
 
-	_, _, err := runRoot(t, "deploy", "service", "--name", "foo", sourceDir)
+	_, _, err := runRoot(t, "deploy", "service",
+		"--name", "foo",
+		"--port", "8080",
+		sourceDir,
+	)
 	require.NoError(t, err)
 	assert.Equal(t, "", got.EnvFile)
 }
@@ -170,10 +182,125 @@ func TestDeployService_ExplicitEnvFileMissingReturnsExitConfigError(t *testing.T
 	_, _, err := runRoot(t,
 		"deploy", "service",
 		"--name", "foo",
+		"--port", "8080",
 		"--env-file", "/no/such/file",
 		t.TempDir(),
 	)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, envcap.ErrEnvScriptMissing))
 	assert.Equal(t, ExitConfigError, ExitCodeFor(err))
+}
+
+func TestDeployService_DefaultDockerfileIsJoinedWithSourceDir(t *testing.T) {
+	mock := installMockDeployer(t)
+	var got deploy.Request
+	mock.EXPECT().Deploy(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req deploy.Request) error {
+			got = req
+			return nil
+		})
+
+	sourceDir := t.TempDir()
+	_, _, err := runRoot(t, "deploy", "service",
+		"--name", "foo",
+		"--port", "8080",
+		sourceDir,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(sourceDir, "Dockerfile"), got.Dockerfile)
+}
+
+func TestDeployService_RelativeDockerfileIsJoinedWithSourceDir(t *testing.T) {
+	mock := installMockDeployer(t)
+	var got deploy.Request
+	mock.EXPECT().Deploy(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req deploy.Request) error {
+			got = req
+			return nil
+		})
+
+	sourceDir := t.TempDir()
+	_, _, err := runRoot(t, "deploy", "service",
+		"--name", "foo",
+		"--port", "8080",
+		"--dockerfile", "docker/prod.Dockerfile",
+		sourceDir,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(sourceDir, "docker", "prod.Dockerfile"), got.Dockerfile)
+}
+
+func TestDeployService_AbsoluteDockerfileIsPreserved(t *testing.T) {
+	mock := installMockDeployer(t)
+	var got deploy.Request
+	mock.EXPECT().Deploy(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req deploy.Request) error {
+			got = req
+			return nil
+		})
+
+	abs := "/etc/shared/X.Dockerfile"
+	_, _, err := runRoot(t, "deploy", "service",
+		"--name", "foo",
+		"--port", "8080",
+		"--dockerfile", abs,
+		t.TempDir(),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, abs, got.Dockerfile)
+}
+
+func TestDeployService_RelativeSourceDirAndRelativeDockerfileBothResolved(t *testing.T) {
+	mock := installMockDeployer(t)
+	var got deploy.Request
+	mock.EXPECT().Deploy(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req deploy.Request) error {
+			got = req
+			return nil
+		})
+
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	sub := filepath.Join(parent, "svc")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+
+	origCwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(parent))
+	t.Cleanup(func() { _ = os.Chdir(origCwd) })
+
+	_, _, err = runRoot(t, "deploy", "service",
+		"--name", "foo",
+		"--port", "8080",
+		"./svc",
+	)
+	require.NoError(t, err)
+	assert.True(t, filepath.IsAbs(got.Dockerfile),
+		"Dockerfile must be absolute, got %q", got.Dockerfile)
+	assert.Equal(t, filepath.Join(sub, "Dockerfile"), got.Dockerfile)
+}
+
+func TestDeployService_NoPortReturnsExitUsageError(t *testing.T) {
+	installMockDeployer(t)
+	_, _, err := runRoot(t,
+		"deploy", "service",
+		"--name", "foo",
+		t.TempDir(),
+	)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errUsage))
+	assert.Equal(t, ExitUsageError, ExitCodeFor(err))
+}
+
+func TestDeployService_PortZeroExplicitReturnsExitUsageError(t *testing.T) {
+	installMockDeployer(t)
+	_, _, err := runRoot(t,
+		"deploy", "service",
+		"--name", "foo",
+		"--port", "0",
+		t.TempDir(),
+	)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errUsage))
+	assert.Equal(t, ExitUsageError, ExitCodeFor(err))
 }
