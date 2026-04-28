@@ -68,7 +68,7 @@ decloud deploy service [flags] <source-dir>
 | `--readiness-timeout` | duration | `60s` | no | Total wait before the deploy fails with exit 50. |
 | `--strategy` | string | `recreate` | no | Only `recreate` is accepted in M1. `blue_green` is rejected with exit 10 (M4). |
 | `--dockerfile` | string | `Dockerfile` | no | Path to the Dockerfile. Relative paths resolve under `<source-dir>` regardless of the cwd you invoke `decloud` from. Absolute paths are used as-is. |
-| `--mount` | string (repeatable) | none | no | Rejected with exit 10 in M1. Persistent volumes are M3. |
+| `--mount` | string (repeatable) | none | no | Rejected with exit 10 in M1. Persistent volumes are M2. |
 | `--config-root` | string | `$DECLOUD_ROOT` or `/opt/decloud` | no | Root directory of the Decloud tree. Persistent flag, applies to every subcommand. Logs are written to `<config-root>/logs/decloud.log` (the flag controls log placement as well as registry/Caddy paths). |
 
 The `env.sh` model. The script is sourced inside a hermetic `bash` invocation; whatever it `export`s ends up in the container's environment, never baked into the image. Arbitrary shell is allowed — computed values, conditional exports, subshell calls. The script is re-evaluated only at deploy time, so restarts are fast and reproducible. Borderline cases worth knowing:

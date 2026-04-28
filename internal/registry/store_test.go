@@ -294,6 +294,9 @@ last_deployed_by = ""
 	_, err := store.Load(context.Background(), "foo")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, registry.ErrMountsNotSupported)
+	assert.Contains(t, err.Error(), "mounts are not supported until M2",
+		"loader rejection must name the milestone where mounts ship; "+
+			"keep in lockstep with _docs/usage.md and _ai/decisions/m1-scope.md")
 }
 
 func TestStore_LoadRejectsInvalidStrategy(t *testing.T) {

@@ -58,7 +58,7 @@ func newDeployServiceCmd(rc *rootContext) *cobra.Command {
 	cmd.Flags().StringSliceVar(&f.Hosts, "host", nil, "public hostname(s); repeatable")
 	cmd.Flags().IntVar(&f.Port, "port", 0, "container listen port (required)")
 	cmd.Flags().StringVar(&f.EnvFile, "env-file", "", "path to env.sh (default: <source-dir>/env.sh if present)")
-	cmd.Flags().StringSliceVar(&f.Mounts, "mount", nil, "M1: rejected with ExitConfigError (M3 only)")
+	cmd.Flags().StringSliceVar(&f.Mounts, "mount", nil, "M1: rejected with ExitConfigError (M2 only)")
 	cmd.Flags().StringVar(&f.ReadinessPath, "readiness-path", "/healthz", "HTTP readiness path")
 	cmd.Flags().DurationVar(&f.ReadinessTimeout, "readiness-timeout", 60*time.Second, "total readiness wait")
 	cmd.Flags().StringVar(&f.Strategy, "strategy", "recreate", "deploy strategy (M1: recreate only)")
@@ -69,7 +69,7 @@ func newDeployServiceCmd(rc *rootContext) *cobra.Command {
 
 func runDeployService(ctx context.Context, rc *rootContext, f *deployServiceFlags, sourceDir string) error {
 	if len(f.Mounts) > 0 {
-		return fmt.Errorf("--mount is not supported until M3: %w", registry.ErrMountsNotSupported)
+		return fmt.Errorf("--mount is not supported until M2: %w", registry.ErrMountsNotSupported)
 	}
 	if f.Strategy != "recreate" {
 		return fmt.Errorf("--strategy=%q: only \"recreate\" is supported in M1: %w", f.Strategy, registry.ErrInvalidStrategy)

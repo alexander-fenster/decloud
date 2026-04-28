@@ -26,9 +26,20 @@ git grep -n '"<flag-name>"' internal/cli/
 
 The second grep catches the `cmd.Flags().XVar(..., "<flag-name>", ...)` declaration site (surface 3) which `--<flag-name>` won't.
 
-## Why we don't test surface 3
+## Why we don't test surface 3 (default)
 
 A test that asserts on the help string is a textbook change-detector test (CLAUDE.md bans these). The mitigation is review discipline, not test enforcement. Surfaces 1, 2, 4 are testable: typed-sentinel assertions (`errors.Is(err, errUsage)`), exit code (`ExitCodeFor`), and doc-claim cross-referencing during code review.
+
+## Carve-out: semantic-token contract assertions
+
+A help-text assertion is **not** a change-detector when the substring under test is a *semantic token* whose value participates in a multi-surface contract — typically a milestone label (`"M2"`), an exit-code name, or a sentinel-error wording shared across `--help`, runtime error, and `_docs/`. Asserting `strings.Contains(helpText, "M2")` locks the cross-surface coherence the four-surface doctrine demands; asserting on arbitrary prose ("the port to listen on") locks nothing and breaks on every wording tweak.
+
+The distinction:
+
+- **Change-detector (banned)**: assertion on prose phrasing — `assert.Contains(t, help, "container listen port (required)")`. Breaks when an editor improves the wording with no contract change.
+- **Semantic-token contract (allowed)**: assertion on a token whose value is the contract — `assert.Contains(t, help, "M2")`. Breaks only when the milestone label drifts away from the runtime/loader/usage.md surfaces that say the same word.
+
+Live example: `TestDeployService_MountFlagHelpReferencesM2` in `internal/cli/deploy_service_test.go` asserts on the substring `"M2"` in `--mount`'s help text. The token-not-prose discipline made this the right call (Linus + Don both preferred carve-out over revert). Originator: `_tasks/2026-04-28-milestone-resequence/{010-kevlin-review.md §6.3, 011-linus-impl-review.md §5.3, 012-don-closeout.md §3}`.
 
 ## Pattern for help text on required flags
 

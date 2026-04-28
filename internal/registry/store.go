@@ -66,7 +66,7 @@ func (s *fsStore) Load(ctx context.Context, name string) (*Service, error) {
 			ErrSchemaMismatch, cfgPath, cfg.SchemaVersion, CurrentSchemaVersion)
 	}
 	if len(cfg.Run.Mounts) > 0 {
-		return nil, fmt.Errorf("%w: service %q declares %d mount(s) in %s; mounts are not supported until M3",
+		return nil, fmt.Errorf("%w: service %q declares %d mount(s) in %s; mounts are not supported until M2",
 			ErrMountsNotSupported, cfg.Name, len(cfg.Run.Mounts), cfgPath)
 	}
 	if cfg.Strategy != "" && cfg.Strategy != "recreate" {

@@ -118,7 +118,7 @@ chmod 0755 /opt/decloud/logs
 
 `secrets/` must be `0700`. Per-service secrets files are written `0600` inside it; the registry's loader rejects the service if the modes are wrong.
 
-`state/deploys/` is created here but no M1 code populates it. M2 will write source bundles there for backup.
+`state/deploys/` is created here but no M1 code populates it. M6 will write source bundles there for backup.
 
 To use a different root, set `DECLOUD_ROOT=/some/other/path` in the operator's environment or pass `--config-root` on every invocation. The default is `/opt/decloud`.
 

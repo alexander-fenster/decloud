@@ -3,7 +3,7 @@
 The README's "Handling secrets" section requires structural separation of secrets from operational config on disk — not just logical separation inside one file. Each registered service is therefore TWO files:
 
 - `/opt/decloud/config/services/<name>.toml` — root:root, mode **0644**, world-readable. Holds non-secret operational metadata: `schema_version`, `name`, `source`, `build`, `run` (incl. `mounts` paths), `routes`, `strategy`, `readiness`, `state`. Safe to inspect; future "git-mirror the non-secret config" idea stays cheap.
-- `/opt/decloud/secrets/<name>/env.toml` — root:root, mode **0600**, in a directory at mode **0700**. Holds `schema_version` (must match config) + `env` map (the `env.sh` capture). M3 will add `secrets/<name>/files/` for secret file contents.
+- `/opt/decloud/secrets/<name>/env.toml` — root:root, mode **0600**, in a directory at mode **0700**. Holds `schema_version` (must match config) + `env` map (the `env.sh` capture). M7 will add `secrets/<name>/files/` for secret file contents (originally planned for M3, deferred per maintainer priority — see `_tasks/2026-04-28-milestone-resequence/`).
 
 `Env` lives ONLY in `ServiceSecrets`. Strict-mode loader (`pelletier/go-toml/v2` `DisallowUnknownFields`) rejects any config TOML that tries to smuggle `env` back in — the structural split is enforced by the type system.
 

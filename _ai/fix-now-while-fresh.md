@@ -41,9 +41,22 @@ The "fix-now-while-fresh" rule has a discipline shadow: scope creep. Anchor agai
 - Any architectural change goes back through the PLAN step (Don/Joel/Linus) before EXECUTION continues.
 - Backlog items still exist for items where the rule explicitly fails the decision rule above. Backlog item 9 (real second-signal exit) was correctly punted out of v2.2 even when Issue 2's doc fix was taken in scope.
 
+## Refinement: audit-by-read, not just audit-by-grep
+
+For label-rename / version-bump / milestone-resequence sweeps across N files, **a final end-to-end read of each touched file's surrounding context is required.** Grep alone is insufficient: variant phrasings of the same architectural event survive grep but not read.
+
+Live example from `_tasks/2026-04-28-milestone-resequence/`: Joel's tech-plan audit grepped for the source token `"M2 introduces Viper"` and got hits at `caddy-runs-in-container.md:15` and `:58`. Three lines below an enumerated hit, line 52 said `"until M2's config file lands"` — same architectural event (introduction of `/etc/decloud/config.toml` via Viper), different surface words. Raymond caught it during execution because his sweep methodology *does* read end-to-end (`009-raymond-docs.md` §2 "bare M2/M3 token survey"). Without the catch, the file would have contradicted itself across three lines (`:15` says M3, `:52` says M2, `:58` says M3) and a future-Don re-read would have whiplashed.
+
+Joel's one-sentence failure mode in `013-joel-closeout.md` §3: *"variant phrasings of the same event survive grep but not end-to-end read."*
+
+Lesson: when the rename target has *meaning* (a milestone, a version, a feature flag), the source token can be paraphrased anywhere in prose. Grep finds the verbatim form; only a sequential read finds the paraphrase.
+
+The same fix-while-fresh decision rule still applies to the survivor — Raymond's line-52 fix met all four conditions (mechanical, same file, <5 minutes, on-theme) and was a direct parallel to Joel's own pre-existing-bug fix at `install.md:121`. The rule has now load-tested across two distinct surfacing patterns: Joel's pre-existing bug surfaced by being on-theme, and Raymond's same-architectural-event survivor of an enumerated grep-audit.
+
 ## Originator
 
 Pattern observed across:
 - `_tasks/2026-04-28-deploy-cleanup-on-interrupt/007-don-final-lockdown.md` (v2.1, §3.5 lockdown).
 - `_tasks/2026-04-28-deploy-cleanup-on-interrupt/013-don-plan-iteration2.md` (v2.2, six-item lockdown — applying the rule to Don's own consistency).
 - `_tasks/2026-04-28-deploy-cleanup-on-interrupt/021-don-final-signoff.md` (final verdict — cumulative diff coherent, not patchwork).
+- `_tasks/2026-04-28-milestone-resequence/{009-raymond-docs.md, 011-linus-impl-review.md §6, 012-don-closeout.md §3, 013-joel-closeout.md §3}` (audit-by-read refinement).

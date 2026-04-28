@@ -12,7 +12,7 @@ The bug was reproducible on a Hetzner host with public IPv6: Caddy logged `dial 
 
 **Caddy runs as a Decloud-managed Docker container named `decloud-caddy`, attached to the `decloud` bridge network. `decloud caddy up` brings it up, `decloud caddy down` takes it down, `decloud caddy reload` does its job via `docker exec` into that container.**
 
-Image: `caddy:2`, hardcoded as `caddy.DefaultImage`. No flag, no env var, no TOML override in M1 — that comes when M2 introduces Viper and a real config file. Operators who need a pinned tag can `docker pull caddy:2.7.6 && docker tag caddy:2.7.6 caddy:2`.
+Image: `caddy:2`, hardcoded as `caddy.DefaultImage`. No flag, no env var, no TOML override in M1 — that comes when M3 introduces Viper and a real config file. Operators who need a pinned tag can `docker pull caddy:2.7.6 && docker tag caddy:2.7.6 caddy:2`.
 
 Ports publish dual-stack: six `-p` entries covering `0.0.0.0:80/tcp`, `[::]:80/tcp`, `0.0.0.0:443/tcp`, `[::]:443/tcp`, `0.0.0.0:443/udp`, `[::]:443/udp`. UDP/443 is HTTP/3 over QUIC — without it, mobile clients silently fall back and the symptom looks like "TLS works but my phone is slow."
 
@@ -49,13 +49,13 @@ The pattern across these: any solution that keeps Caddy on the host either reint
 - **Host Caddy is no longer supported.** `decloud caddy up` fails with port-bound errors if the M1.0 host Caddy is still running. The persistent-disable command is `systemctl mask caddy` (not `disable --now`, which a package upgrade silently undoes) or `apt-get remove -y caddy`.
 - **The reloader switched seam from `cmdFactory` to `Driver.Exec`.** `internal/caddy/reloader.go` now `docker exec`s into `decloud-caddy`, translating host paths inside `/opt/decloud/config/caddy` to container paths under `/etc/caddy`. The legacy `cmdFactory` test seam was deleted.
 - **Deploy errors when Caddy is down give a one-command recovery.** `internal/deploy/service.go` wraps the validate-leg and reload-leg failures with `service is registered and running but Caddy is not routing traffic; run 'decloud caddy up' (and then 'decloud caddy reload' if needed)`. The deployer does NOT pre-flight Caddy on every deploy — that adds coupling for a rare misuse case.
-- **`caddy:2` floats.** Operators who pin a tag retag locally as the workaround until M2's config file lands. Documented in `_docs/install.md`.
+- **`caddy:2` floats.** Operators who pin a tag retag locally as the workaround until M3's config file lands. Documented in `_docs/install.md`.
 - **Concurrent deploys (theoretical, M2+).** Two simultaneous deploys writing `Caddyfile.tmp`, validating, renaming, then both reloading is `last-rename-wins`. Caddy handles back-to-back reloads correctly. M1 is single-operator; flag if multi-operator becomes plausible.
 
 ## Forward-looking notes
 
 - **M4 admin API.** Blue/green via Caddy's admin API needs the admin endpoint published inside the `decloud` network only (or via Unix socket on a shared volume). Either way the container model already in place is what M4 will reuse — there is no "containerise Caddy at M4" task.
-- **Pinning the image tag.** When M2 introduces Viper, the obvious config knob is `caddy.image = "caddy:2.7.6"`. The `DefaultImage` constant becomes the fallback.
+- **Pinning the image tag.** When M3 introduces Viper, the obvious config knob is `caddy.image = "caddy:2.7.6"`. The `DefaultImage` constant becomes the fallback.
 
 ## Why this isn't in `_docs/`
 

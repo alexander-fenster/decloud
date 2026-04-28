@@ -8,12 +8,12 @@
 ## The rule
 
 - M1 writes `schema_version = 1`.
-- M3 writes `schema_version = 1`. M3 only populates fields that M1 reserved (`Mounts`, future secret-file declarations under `mounts`); the schema *shape* doesn't change.
+- M2 writes `schema_version = 1`. M2 populates `Mounts`. M7 (secret-files-on-disk) also writes `schema_version = 1` and populates the secret-file substructure under `mounts`. The schema *shape* doesn't change between any of these milestones.
 - Bump to 2 ONLY when forced by a semantic break. Never preemptively reserve fields by bumping.
 
 ## What "reserve fields" looks like in practice
 
-M1 declares the full schema shape — including fields M1 won't populate (`Mounts` always empty in M1). M1's loader rejects non-empty `Mounts` with the same `ErrMountsNotSupported` as the CLI's `--mount` flag (closes the hand-edit loophole). M3 starts populating; no file rewrite, no migration code. An M1-era TOML loads cleanly in an M3 binary because the shape is identical, only the values differ.
+M1 declares the full schema shape — including fields M1 won't populate (`Mounts` always empty in M1). M1's loader rejects non-empty `Mounts` with the same `ErrMountsNotSupported` as the CLI's `--mount` flag (closes the hand-edit loophole). M2 starts populating `Mounts`; no file rewrite, no migration code. An M1-era TOML loads cleanly in an M2 binary because the shape is identical, only the values differ. M7 extends populating to secret-file declarations on the same shape.
 
 ## Escalation rule
 

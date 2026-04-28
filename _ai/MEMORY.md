@@ -6,7 +6,7 @@ Tactical reference for the Decloud codebase. Each file is a dense decision recor
 
 - `decisions/m1-scope.md` — M1 = server-side `decloud deploy service` with `recreate` strategy; why "client first" / "bootstrap first" / "jobs first" were rejected; full M1→M7 milestone sequence.
 - `decisions/secrets-split.md` — config TOML mode 0644 + `secrets/<name>/env.toml` mode 0600 in 0700 dir; load/save/delete ordering that produces only the recoverable "config-without-secrets" failure mode.
-- `decisions/schema-versioning.md` — `pelletier/go-toml/v2` strict mode + `schema_version` integer; bump only on semantic breaks, never preemptively; M1/M3 both write version 1.
+- `decisions/schema-versioning.md` — `pelletier/go-toml/v2` strict mode + `schema_version` integer; bump only on semantic breaks, never preemptively; M1/M2/M7 all write version 1 (mounts populate at M2, secret-files at M7).
 - `decisions/m1-test-strategy.md` — M1 ships unit-tests-only per maintainer directive; Gomock for `Store`/`Capturer`/`Driver`/`Generator`/`Reloader`, real bash for `internal/envcap`, ten-item handoff receipt is the manual-CI bridge until GitHub Actions lands.
 - `decisions/no-magic-zero-modes.md` — `--port=0` rejected at validation, NOT treated as "worker mode"; M5 workers get a separate `deploy job` command. Why folding workload shapes into one command via magic values produces 200-line if-else trees.
 - `decisions/caddy-runs-in-container.md` — Caddy is `decloud-caddy` on the `decloud` Docker network, not a host systemd unit; why every host-side variant (host.docker.internal, --network host, /etc/hosts injection, resolvers 127.0.0.11, dnsmasq, sidecar) was rejected; dual-stack publishing, named-volume ACME state, deploy-failure recovery contract.
@@ -54,3 +54,4 @@ When a decision record points back at planning detail, the canonical source is t
 - `_tasks/2026-04-26-readme-implementation-planning/07-linus-review-v2.md` — Linus's approval, including borderline-but-not-blocker edge cases on env capture.
 - `_tasks/2026-04-27-caddy-container-connection-refused/005-don-plan-v2.md` — root-cause analysis (host Caddy can't resolve `decloud-<x>`) and the Caddy-in-container fix.
 - `_tasks/2026-04-27-caddy-container-connection-refused/004-linus-review.md` — enumeration of the seven rejected alternatives (`host.docker.internal`, `--network host`, `--network container:`, sidecar, `/etc/hosts` injection, `--resolvers 127.0.0.11`, host-local `dnsmasq`).
+- `_tasks/2026-04-28-milestone-resequence/` — 2026-04-28 maintainer-priority resequence: M2/M3 swap, M3b client deferred to M7, secret-files-on-disk deferred to M7. Doesn't change M1, M4, M5, M6 in content.

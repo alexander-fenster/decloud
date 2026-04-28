@@ -89,6 +89,18 @@ func TestDeployService_MountFlagReturnsErrMountsNotSupported(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, registry.ErrMountsNotSupported))
 	assert.Equal(t, ExitConfigError, ExitCodeFor(err))
+	assert.Contains(t, err.Error(), "--mount is not supported until M2",
+		"runtime rejection must name the milestone where mounts ship; "+
+			"keep in lockstep with _docs/usage.md and _ai/decisions/m1-scope.md")
+}
+
+func TestDeployService_MountFlagHelpReferencesM2(t *testing.T) {
+	cmd := newDeployServiceCmd(&rootContext{})
+	flag := cmd.Flags().Lookup("mount")
+	require.NotNil(t, flag)
+	assert.Contains(t, flag.Usage, "M2 only",
+		"flag help must name the milestone where mounts ship; "+
+			"keep in lockstep with the runtime rejection error and _docs/usage.md")
 }
 
 func TestDeployService_StrategyBlueGreenReturnsErrInvalidStrategy(t *testing.T) {

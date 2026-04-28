@@ -4,7 +4,7 @@ M1 ships with `go test ./...` as the only automated gate. No integration tests, 
 
 ## 1. The user directive
 
-The maintainer's instruction was explicit: "I will test it on a real system after M1 is done." That moves every `-tags integration` test out of M1 execution scope. Joel's tech-plan §12.2 listed `internal/dockerdrv/integration_test.go`, `internal/caddy/integration_test.go`, and `internal/deploy/integration_test.go`; none of those files exist in the M1 tree. Their replacement is the manual smoke-test the maintainer will run on a real Linux host once the binary lands. That smoke-test is M2's first feedback signal, not an M1 deliverable.
+The maintainer's instruction was explicit: "I will test it on a real system after M1 is done." That moves every `-tags integration` test out of M1 execution scope. Joel's tech-plan §12.2 listed `internal/dockerdrv/integration_test.go`, `internal/caddy/integration_test.go`, and `internal/deploy/integration_test.go`; none of those files exist in the M1 tree. Their replacement is the manual smoke-test the maintainer will run on a real Linux host once the binary lands. That smoke-test is the next milestone's first feedback signal, not an M1 deliverable.
 
 This is not laziness. Integration tests against a real Docker daemon and a real Caddy install slow the inner loop, require platform-specific CI runners, and would not have caught either of the two operator-blocking bugs Kevlin found in iter1 (logging-init mkdir on `--help`, `Capture("")` masquerading as a working default). Both were unit-testable and are now unit-tested.
 
@@ -46,7 +46,7 @@ The maintainer will run `decloud deploy service` against a real Linux host and r
 - `caddy validate` and `caddy reload` semantic differences across Caddy versions. The reloader is mocked; a Caddy version that emits a syntactically-valid Caddyfile-but-fails-at-reload-with-a-new-error is invisible to unit tests.
 - Network-namespace reachability. The host-side readiness probe assumes the default bridge driver routes from the host's netns to the container's bridge IP. Docker Desktop on macOS supports this via its VM bridge; production Linux supports it natively. A custom network configuration on the host could break the probe path entirely.
 
-When the maintainer reports a real-system failure, the unit-test gap that allowed it through becomes M2's first priority. Add the missing test, then add the integration test that would have caught it earlier, then ship the fix.
+When the maintainer reports a real-system failure, the unit-test gap that allowed it through becomes the next milestone's first priority. Add the missing test, then add the integration test that would have caught it earlier, then ship the fix.
 
 ## 5. Local test-run tip
 
