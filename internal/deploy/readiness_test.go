@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -158,9 +157,8 @@ func TestReadiness_ContextCancellationStopsProbe(t *testing.T) {
 	spec.TimeoutSecs = 30
 	err := probe.Wait(ctx, probeContainerName, spec, port)
 	require.Error(t, err)
-	assert.True(t,
-		errors.Is(err, context.Canceled) ||
-			strings.Contains(err.Error(), "context canceled") ||
-			errors.Is(err, deploy.ErrReadiness),
-		"expected context cancellation to terminate the probe; got %v", err)
+	assert.True(t, errors.Is(err, context.Canceled),
+		"context cancellation must surface as context.Canceled in the error chain; got %v", err)
+	assert.False(t, errors.Is(err, deploy.ErrReadiness),
+		"context cancellation must NOT be wrapped as ErrReadiness; got %v", err)
 }

@@ -39,7 +39,8 @@ type RunRequest struct {
 
 type InspectResult struct {
 	ContainerID string
-	State       string // "running" | "exited" | "absent"
+	State       string            // "running" | "exited" | "absent"
+	Labels      map[string]string // container labels; nil when State == "absent"
 }
 
 type LogsOptions struct {

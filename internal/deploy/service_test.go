@@ -54,6 +54,36 @@ func (p *passThroughProbe) Wait(ctx context.Context, name string, _ registry.Rea
 	}
 }
 
+// cancellingProbe is a Probe that blocks until ctx is cancelled and then
+// returns the raw context error — exactly the contract httpProbe.Wait now
+// follows after the v2 readiness change. Used by the §5.1 / §5.6 / §5.10.1
+// cancellation tests; injected via newDeployerHarnessWithProbe.
+type cancellingProbe struct{}
+
+func (cancellingProbe) Wait(ctx context.Context, _ string, _ registry.ReadinessSpec, _ int) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// notCancelledCtxMatcher asserts that the captured argument is a context
+// whose Err() is nil at the moment the mock was invoked. Used to verify
+// cleanup paths receive a fresh, non-cancelled context.
+type notCancelledCtxMatcher struct{}
+
+func (notCancelledCtxMatcher) Matches(x any) bool {
+	ctx, ok := x.(context.Context)
+	if !ok {
+		return false
+	}
+	return ctx.Err() == nil
+}
+
+func (notCancelledCtxMatcher) String() string {
+	return "is a context with Err() == nil at call time"
+}
+
+func notCancelledCtx() gomock.Matcher { return notCancelledCtxMatcher{} }
+
 type deployerHarness struct {
 	deployer  deploy.ServiceDeployer
 	store     *registrymocks.MockStore
@@ -66,8 +96,37 @@ type deployerHarness struct {
 	stderr    *bytes.Buffer
 }
 
-func newDeployerHarness(t *testing.T) *deployerHarness {
+// harnessOption configures newDeployerHarnessWithProbe.
+type harnessOption func(*harnessConfig)
+
+type harnessConfig struct {
+	skipInspectAbsentDefault bool
+}
+
+// withoutInspectAbsentDefault opts the harness out of installing the default
+// Inspect → absent AnyTimes expectation. Required by tests that need a
+// non-absent Inspect response on the request path (gomock matches
+// expectations in FIFO insertion order, so the harness default would
+// otherwise win against a test-supplied expectation).
+func withoutInspectAbsentDefault() harnessOption {
+	return func(c *harnessConfig) { c.skipInspectAbsentDefault = true }
+}
+
+func newDeployerHarness(t *testing.T, opts ...harnessOption) *deployerHarness {
 	t.Helper()
+	return newDeployerHarnessWithProbe(t, nil, opts...)
+}
+
+// newDeployerHarnessWithProbe constructs the harness with a caller-supplied
+// readiness probe. Passing nil falls back to passThroughProbe (production-
+// shape happy-path probe). Tests that need cancellation-driven probe
+// behaviour pass cancellingProbe{}.
+func newDeployerHarnessWithProbe(t *testing.T, probe deploy.ReadinessProbe, opts ...harnessOption) *deployerHarness {
+	t.Helper()
+	cfg := harnessConfig{}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	ctrl := gomock.NewController(t)
 	root := t.TempDir()
 	paths := config.NewPaths(root)
@@ -79,6 +138,22 @@ func newDeployerHarness(t *testing.T) *deployerHarness {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 
+	if probe == nil {
+		probe = &passThroughProbe{driver: driver}
+	}
+
+	// Default expectation: any first-deploy test that exercises the §3.5
+	// defensive-orphan branch sees an "absent" container. Tests that care
+	// about a non-absent inspect override this entirely with the
+	// withoutInspectAbsentDefault() option (gomock matches FIFO; see
+	// 06-linus-review-v2.md and 08-kent-tests.md for the empirical note).
+	if !cfg.skipInspectAbsentDefault {
+		driver.EXPECT().
+			Inspect(gomock.Any(), gomock.Any()).
+			Return(dockerdrv.InspectResult{State: "absent"}, nil).
+			AnyTimes()
+	}
+
 	d, err := deploy.NewServiceDeployer(deploy.Dependencies{
 		Paths:     paths,
 		Store:     store,
@@ -88,7 +163,7 @@ func newDeployerHarness(t *testing.T) *deployerHarness {
 		Reloader:  rel,
 		Stdout:    stdout,
 		Stderr:    stderr,
-		Probe:     &passThroughProbe{driver: driver},
+		Probe:     probe,
 	})
 	require.NoError(t, err)
 	return &deployerHarness{
@@ -220,7 +295,7 @@ func TestDeploy_BuildFailureAbortsBeforeStoppingOld(t *testing.T) {
 }
 
 func TestDeploy_StopOldFailureAbortsAndDoesNotStartNew(t *testing.T) {
-	h := newDeployerHarness(t)
+	h := newDeployerHarness(t, withoutInspectAbsentDefault())
 	prev := newPrev()
 
 	h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
@@ -284,6 +359,294 @@ func TestDeploy_ReadinessFailureRollsBackToOld(t *testing.T) {
 	err := h.deployer.Deploy(context.Background(), req)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, deploy.ErrReadiness))
+}
+
+func TestDeploy_ProbeCancellationCleansUpWithFreshContext(t *testing.T) {
+	h := newDeployerHarnessWithProbe(t, cancellingProbe{})
+	ctx, cancel := context.WithCancel(context.Background())
+
+	h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
+	h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "foo").Return(nil, registry.ErrNotFound)
+	h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil)
+	h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ dockerdrv.RunRequest) (string, error) {
+			cancel()
+			return "cid", nil
+		})
+	h.driver.EXPECT().Stop(notCancelledCtx(), "decloud-foo", gomock.Any()).Return(nil)
+	h.driver.EXPECT().Remove(notCancelledCtx(), "decloud-foo").Return(nil)
+
+	err := h.deployer.Deploy(ctx, newRequest())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, deploy.ErrInterrupted),
+		"probe cancellation must surface as ErrInterrupted; got %v", err)
+	assert.True(t, errors.Is(err, context.Canceled),
+		"context.Canceled must traverse the error chain; got %v", err)
+	assert.False(t, errors.Is(err, deploy.ErrReadiness),
+		"cancellation must NOT be wrapped as ErrReadiness; got %v", err)
+}
+
+func TestDeploy_DefensiveOrphanCleanupOnFreshDeployWhenContainerExists(t *testing.T) {
+	h := newDeployerHarness(t, withoutInspectAbsentDefault())
+
+	gomock.InOrder(
+		h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil),
+		h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil),
+		h.store.EXPECT().Load(gomock.Any(), "foo").Return(nil, registry.ErrNotFound),
+		h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil),
+		h.driver.EXPECT().Inspect(gomock.Any(), "decloud-foo").
+			Return(dockerdrv.InspectResult{
+				ContainerID: "orphan-id",
+				State:       "running",
+				Labels:      map[string]string{"decloud.service": "foo"},
+			}, nil),
+		h.driver.EXPECT().Stop(gomock.Any(), "decloud-foo", gomock.Any()).Return(nil),
+		h.driver.EXPECT().Remove(gomock.Any(), "decloud-foo").Return(nil),
+		h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).Return("new-cid", nil),
+		h.driver.EXPECT().ContainerIP(gomock.Any(), gomock.Any()).Return("172.18.0.5", nil),
+		h.store.EXPECT().Save(gomock.Any(), gomock.Any()).Return(nil),
+		h.store.EXPECT().List(gomock.Any()).Return(nil, nil),
+		h.generator.EXPECT().Generate(gomock.Any(), gomock.Any()).DoAndReturn(stubGenerate),
+		h.reloader.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil),
+		h.reloader.EXPECT().Reload(gomock.Any(), gomock.Any()).Return(nil),
+	)
+
+	require.NoError(t, h.deployer.Deploy(context.Background(), newRequest()))
+}
+
+func TestDeploy_DefensiveOrphanCleanupSkippedWhenContainerAbsent(t *testing.T) {
+	h := newDeployerHarness(t, withoutInspectAbsentDefault())
+
+	gomock.InOrder(
+		h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil),
+		h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil),
+		h.store.EXPECT().Load(gomock.Any(), "foo").Return(nil, registry.ErrNotFound),
+		h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil),
+		h.driver.EXPECT().Inspect(gomock.Any(), "decloud-foo").
+			Return(dockerdrv.InspectResult{State: "absent"}, nil),
+		h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).Return("cid", nil),
+		h.driver.EXPECT().ContainerIP(gomock.Any(), gomock.Any()).Return("172.18.0.5", nil),
+		h.store.EXPECT().Save(gomock.Any(), gomock.Any()).Return(nil),
+		h.store.EXPECT().List(gomock.Any()).Return(nil, nil),
+		h.generator.EXPECT().Generate(gomock.Any(), gomock.Any()).DoAndReturn(stubGenerate),
+		h.reloader.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil),
+		h.reloader.EXPECT().Reload(gomock.Any(), gomock.Any()).Return(nil),
+	)
+	h.driver.EXPECT().Stop(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	h.driver.EXPECT().Remove(gomock.Any(), gomock.Any()).Times(0)
+
+	require.NoError(t, h.deployer.Deploy(context.Background(), newRequest()))
+}
+
+func TestDeploy_DefensiveOrphanCleanupFailureWrapsErrRun(t *testing.T) {
+	h := newDeployerHarness(t, withoutInspectAbsentDefault())
+
+	h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
+	h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "foo").Return(nil, registry.ErrNotFound)
+	h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil)
+	h.driver.EXPECT().Inspect(gomock.Any(), "decloud-foo").
+		Return(dockerdrv.InspectResult{
+			State:  "running",
+			Labels: map[string]string{"decloud.service": "foo"},
+		}, nil)
+	stopErr := errors.New("daemon hung")
+	h.driver.EXPECT().Stop(gomock.Any(), "decloud-foo", gomock.Any()).Return(stopErr)
+
+	err := h.deployer.Deploy(context.Background(), newRequest())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, deploy.ErrRun),
+		"orphan-cleanup failure must surface as ErrRun; got %v", err)
+	assert.True(t, errors.Is(err, stopErr),
+		"inner stop error must traverse the chain; got %v", err)
+	assert.Contains(t, err.Error(), "docker rm -f decloud-foo",
+		"recovery hint must mention 'docker rm -f decloud-foo'; got %q", err.Error())
+}
+
+func TestDeploy_RestoreOldContainerUsesFreshContextOnRedeployCancellation(t *testing.T) {
+	h := newDeployerHarnessWithProbe(t, cancellingProbe{})
+	prev := newPrev()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
+	h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "foo").Return(prev, nil)
+	h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil)
+	h.driver.EXPECT().Stop(gomock.Any(), "decloud-foo", gomock.Any()).Return(nil)
+	h.driver.EXPECT().Remove(gomock.Any(), "decloud-foo").Return(nil)
+	h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ dockerdrv.RunRequest) (string, error) {
+			cancel()
+			return "new-cid", nil
+		})
+	h.driver.EXPECT().Stop(notCancelledCtx(), "decloud-foo", gomock.Any()).Return(nil)
+	h.driver.EXPECT().Remove(notCancelledCtx(), "decloud-foo").Return(nil)
+	h.driver.EXPECT().Run(notCancelledCtx(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, req dockerdrv.RunRequest) (string, error) {
+			assert.Equal(t, prev.Config.Build.ImageRef, req.Image,
+				"rollback restores the previous image")
+			return "rb-cid", nil
+		})
+
+	err := h.deployer.Deploy(ctx, newRequest())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, deploy.ErrInterrupted),
+		"redeploy cancellation must surface as ErrInterrupted; got %v", err)
+}
+
+func TestDeploy_DefensiveOrphanRefusesContainerWithoutDecloudLabel(t *testing.T) {
+	h := newDeployerHarness(t, withoutInspectAbsentDefault())
+
+	h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
+	h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "foo").Return(nil, registry.ErrNotFound)
+	h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil)
+	h.driver.EXPECT().Inspect(gomock.Any(), "decloud-foo").
+		Return(dockerdrv.InspectResult{
+			State:  "running",
+			Labels: map[string]string{"some.other.label": "value"},
+		}, nil)
+	h.driver.EXPECT().Stop(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	h.driver.EXPECT().Remove(gomock.Any(), gomock.Any()).Times(0)
+	h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).Times(0)
+
+	err := h.deployer.Deploy(context.Background(), newRequest())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, deploy.ErrRun),
+		"missing decloud label must surface as ErrRun; got %v", err)
+	assert.Contains(t, err.Error(), "was not created by decloud",
+		"refusal message must mention provenance; got %q", err.Error())
+	assert.Contains(t, err.Error(), "docker rm -f decloud-foo",
+		"refusal message must include manual recovery hint; got %q", err.Error())
+}
+
+func TestDeploy_DefensiveOrphanRefusesContainerWithMismatchedLabel(t *testing.T) {
+	h := newDeployerHarness(t, withoutInspectAbsentDefault())
+
+	h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
+	h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "foo").Return(nil, registry.ErrNotFound)
+	h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil)
+	h.driver.EXPECT().Inspect(gomock.Any(), "decloud-foo").
+		Return(dockerdrv.InspectResult{
+			State:  "running",
+			Labels: map[string]string{"decloud.service": "bar"},
+		}, nil)
+	h.driver.EXPECT().Stop(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	h.driver.EXPECT().Remove(gomock.Any(), gomock.Any()).Times(0)
+	h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).Times(0)
+
+	err := h.deployer.Deploy(context.Background(), newRequest())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, deploy.ErrRun),
+		"mismatched decloud.service label must surface as ErrRun; got %v", err)
+	assert.Contains(t, err.Error(), `decloud.service="bar"`,
+		"refusal message must surface the offending label value; got %q", err.Error())
+	assert.Contains(t, err.Error(), "does not match",
+		"refusal message must mention the mismatch; got %q", err.Error())
+}
+
+func TestDeploy_DefensiveOrphanInspectCancelledReturnsErrInterrupted(t *testing.T) {
+	cases := []struct {
+		name     string
+		register func(h *deployerHarness)
+	}{
+		{
+			name: "inspect-cancelled",
+			register: func(h *deployerHarness) {
+				h.driver.EXPECT().Inspect(gomock.Any(), "decloud-foo").
+					Return(dockerdrv.InspectResult{}, context.Canceled)
+			},
+		},
+		{
+			name: "stop-cancelled",
+			register: func(h *deployerHarness) {
+				h.driver.EXPECT().Inspect(gomock.Any(), "decloud-foo").
+					Return(dockerdrv.InspectResult{
+						State:  "running",
+						Labels: map[string]string{"decloud.service": "foo"},
+					}, nil)
+				h.driver.EXPECT().Stop(gomock.Any(), "decloud-foo", gomock.Any()).
+					Return(context.Canceled)
+			},
+		},
+		{
+			name: "remove-cancelled",
+			register: func(h *deployerHarness) {
+				h.driver.EXPECT().Inspect(gomock.Any(), "decloud-foo").
+					Return(dockerdrv.InspectResult{
+						State:  "running",
+						Labels: map[string]string{"decloud.service": "foo"},
+					}, nil)
+				h.driver.EXPECT().Stop(gomock.Any(), "decloud-foo", gomock.Any()).Return(nil)
+				h.driver.EXPECT().Remove(gomock.Any(), "decloud-foo").
+					Return(context.Canceled)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newDeployerHarness(t, withoutInspectAbsentDefault())
+
+			h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
+			h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
+			h.store.EXPECT().Load(gomock.Any(), "foo").Return(nil, registry.ErrNotFound)
+			h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil)
+			tc.register(h)
+
+			err := h.deployer.Deploy(context.Background(), newRequest())
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, deploy.ErrInterrupted),
+				"cancellation during orphan check must surface as ErrInterrupted; got %v", err)
+			assert.False(t, errors.Is(err, deploy.ErrRun),
+				"cancellation must NOT be wrapped as ErrRun; got %v", err)
+		})
+	}
+}
+
+func TestDeploy_RedeployStopRemovePreviousContainerCancelledReturnsErrInterrupted(t *testing.T) {
+	cases := []struct {
+		name     string
+		register func(h *deployerHarness)
+	}{
+		{
+			name: "stop-cancelled",
+			register: func(h *deployerHarness) {
+				h.driver.EXPECT().Stop(gomock.Any(), "decloud-foo", gomock.Any()).
+					Return(context.Canceled)
+				h.driver.EXPECT().Inspect(gomock.Any(), "decloud-foo").
+					Return(dockerdrv.InspectResult{State: "running"}, nil)
+			},
+		},
+		{
+			name: "remove-cancelled",
+			register: func(h *deployerHarness) {
+				h.driver.EXPECT().Stop(gomock.Any(), "decloud-foo", gomock.Any()).Return(nil)
+				h.driver.EXPECT().Remove(gomock.Any(), "decloud-foo").
+					Return(context.Canceled)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newDeployerHarness(t, withoutInspectAbsentDefault())
+			prev := newPrev()
+
+			h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
+			h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
+			h.store.EXPECT().Load(gomock.Any(), "foo").Return(prev, nil)
+			h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil)
+			tc.register(h)
+
+			err := h.deployer.Deploy(context.Background(), newRequest())
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, deploy.ErrInterrupted),
+				"cancellation during redeploy stop/remove must surface as ErrInterrupted; got %v", err)
+			assert.False(t, errors.Is(err, deploy.ErrRun),
+				"cancellation must NOT be wrapped as ErrRun; got %v", err)
+		})
+	}
 }
 
 func TestDeploy_SaveErrPartialWriteRollsBackAndDeletesOrphanConfig(t *testing.T) {

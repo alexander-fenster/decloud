@@ -82,7 +82,7 @@ What the deploy actually does, in order:
 0. Ensure the `decloud` Docker network exists. Missing networks are created on the fly; failures here surface as exit 40.
 1. Capture the environment from `env.sh` (skipped if no env script is in play).
 2. Build the image with `docker build`.
-3. Stop and remove any previous container for this service.
+3. Stop and remove any previous container for this service. On a fresh deploy (no registry entry), inspect any container that already happens to be named `decloud-<name>`: if it carries the `decloud.service=<name>` label, treat it as an orphan from a prior interrupted deploy and remove it; if the label is missing or mismatched, refuse with exit 40 (see [§8](#8-interrupting-a-deploy-ctrlc)).
 4. Run the new container on the `decloud` network.
 5. Wait for `GET <readiness-path>` to return `200 OK` from the host (probing the container's bridge IP directly; ports are not published to the host).
 6. Persist the service registration to `/opt/decloud/config/services/<name>.toml` and `/opt/decloud/secrets/<name>/env.toml`.
@@ -99,10 +99,11 @@ If any step fails, the deploy aborts, surfaces a non-zero exit code, and does wh
 | `10` | `ExitConfigError` | Registry rejection (unknown service, schema mismatch, bad file mode, missing secrets, `--mount` used, `--strategy` other than `recreate`); explicit `--env-file=<path>` pointing at a missing or unreadable file; `decloud stop`, `start`, `restart`, or `logs` against a container that is not registered. |
 | `20` | `ExitEnvCaptureFail` | `env.sh` failed to source or capture (readonly conflict, syntax error, non-zero exit). |
 | `30` | `ExitBuildFail` | `docker build` failed. |
-| `40` | `ExitRunFail` | A docker driver call failed: `docker run`, `docker start`, `docker inspect`, `docker logs`, `docker network create`, or any failure from `decloud caddy up` / `decloud caddy down`. `docker stop` against a non-existent container surfaces as exit 10, not 40. |
+| `40` | `ExitRunFail` | A docker driver call failed: `docker run`, `docker start`, `docker inspect`, `docker logs`, `docker network create`, or any failure from `decloud caddy up` / `decloud caddy down`. Also returned when a fresh deploy finds an existing `decloud-<name>` container that lacks the `decloud.service=<name>` label (see [§8](#8-interrupting-a-deploy-ctrlc)). `docker stop` against a non-existent container surfaces as exit 10, not 40. |
 | `50` | `ExitReadinessFail` | The new container did not return `200 OK` within `--readiness-timeout`. |
 | `60` | `ExitCaddyReloadFail` | `caddy validate` rejected the generated Caddyfile, `caddy reload` failed at runtime, or `decloud-caddy` is not running (run `decloud caddy up`). |
 | `70` | `ExitInternal` | Anything else (unwrapped I/O error, panic-recovered error). |
+| `130` | `ExitInterrupted` | The deploy was cancelled by the user (ctrl+c / SIGINT or SIGTERM). Follows the POSIX `128 + signal` convention (SIGINT = 2). Distinct from `ExitReadinessFail` so an interrupted deploy is not confused with an app that failed its health check. |
 
 ## 4. Lifecycle commands
 
@@ -224,3 +225,30 @@ decloud caddy up
 ```
 
 If `caddy up` reports `caddy already running` but routing is still broken, follow with `decloud caddy reload` to push the current registry state into the running Caddy.
+
+## 8. Interrupting a deploy (ctrl+c)
+
+Pressing ctrl+c during `decloud deploy service` — most commonly while it is waiting for the readiness probe — cancels the deploy cleanly. The exit code is `130` (`ExitInterrupted`), and the new container is stopped and removed before `decloud` returns. The audit log records `deploy cancelled during readiness wait` at info level rather than `readiness failed` at error level, so an interrupted deploy is distinguishable from a real readiness failure when grepping `/opt/decloud/logs/decloud.log`.
+
+Cleanup runs on a fresh 30-second timeout that is independent of the cancelled request context, so `docker stop` and `docker rm` still execute on the host. SIGTERM behaves identically to SIGINT.
+
+If the cleanup itself fails (rare — typically a hung Docker daemon), `decloud` logs a warning naming the container (`cleanup failed; manual removal may be required`). Two recovery paths exist:
+
+1. **Re-run `decloud deploy service` for the same `--name`.** A fresh deploy detects the orphaned `decloud-<name>` container, verifies it carries the `decloud.service=<name>` label that `decloud` itself attaches to every container it creates, and stops + removes it before starting the new one. The audit log records `removing orphan container from prior interrupted deploy` at warn level. This is the recommended path; you do not need to touch Docker manually.
+2. **Remove the container by hand:** `docker rm -f decloud-<name>`.
+
+A second ctrl+c during cleanup does not interrupt cleanup; the Go signal handler installed by `signal.NotifyContext` absorbs it. To force exit before the 30-second `cleanupTimeout` window completes, send SIGKILL (`kill -9 <pid>`); path (1) above still recovers on the next deploy.
+
+### When the orphan was not created by decloud
+
+The orphan-cleanup branch is label-gated. If a container named `decloud-<name>` already exists on the host but does NOT carry the `decloud.service=<name>` label — for example, a container you ran by hand with that name, or a container created by a different tool — `decloud deploy service` refuses with exit `40` (`ExitRunFail`) and the message:
+
+```text
+container decloud-<name> exists but was not created by decloud (label decloud.service="..." does not match "..."); refusing to remove. Run 'docker rm -f decloud-<name>' manually if you want to claim this name, or pick a different service name
+```
+
+This is a safety guardrail: `decloud` only removes containers it can prove it created. Recovery is whichever the message suggests — `docker rm -f` the container yourself, or pick a different `--name`.
+
+### What this does not cover
+
+`SIGKILL` (kill -9) of `decloud` while a container is running, or a host power loss between `docker run` and the registry save, both leave an orphan that no cleanup defer can reach. The next-deploy orphan recovery in path (1) above is the only mitigation; it works for these cases too because the label gate applies to any orphan, not only ctrl+c orphans.

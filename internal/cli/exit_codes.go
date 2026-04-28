@@ -20,6 +20,7 @@ const (
 	ExitReadinessFail   = 50
 	ExitCaddyReloadFail = 60
 	ExitInternal        = 70
+	ExitInterrupted     = 130 // 128 + SIGINT(2); POSIX convention
 )
 
 // errUsage is the package-internal sentinel for misuse of the CLI itself
@@ -33,6 +34,8 @@ func ExitCodeFor(err error) int {
 	switch {
 	case err == nil:
 		return ExitOK
+	case errors.Is(err, deploy.ErrInterrupted):
+		return ExitInterrupted
 	case errors.Is(err, errUsage):
 		return ExitUsageError
 	case errors.Is(err, registry.ErrMountsNotSupported),

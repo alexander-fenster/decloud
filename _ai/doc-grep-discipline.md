@@ -36,6 +36,12 @@ Error wrap chains compose: the manager wraps with one prefix, the driver wraps w
 
 The bug class generalizes: any time a doc shows a literal the operator will compare against terminal output, the displayed bytes are a contract with the code. Treat them as such.
 
+## Slog messages quoted in operator runbooks are also a contract
+
+The same discipline applies when `_docs/*.md` quotes a slog message that operators are told to grep their audit log for. The deploy-cleanup-on-interrupt task changed two slog phrases in iter2 (`"removed orphan ..."` → `"removing orphan ..."`, and `"cleanup failed; please remove X manually"` → `"cleanup failed; manual removal may be required"`). Both production sites shipped clean; the doc had to chase. Joel pre-flagged the first quote drift (`_docs/usage.md:237`) in `03-tech-plan.md` §13.8; Linus caught the second (`usage.md:235`) on iter2 re-review (`20-linus-impl-review-iter2.md`). Two passes, two drifts, same shape.
+
+Recipe: when changing a slog `Warn`/`Error`/`Info` message string, immediately `grep -F "<old phrase>" _docs/` and update every hit in the same diff. Don't trust the production-side change alone.
+
 ## Originator
 
-`_tasks/2026-04-27-caddy-container-connection-refused/011-kevlin-review.md` (cycle-1 catch), `017-raymond-docs-cycle2.md` (cycle-2 fix), `018-linus-impl-review-cycle2.md` §4 (post-fix verification with the literal `grep -F` recipe above).
+`_tasks/2026-04-27-caddy-container-connection-refused/011-kevlin-review.md` (cycle-1 catch), `017-raymond-docs-cycle2.md` (cycle-2 fix), `018-linus-impl-review-cycle2.md` §4 (post-fix verification with the literal `grep -F` recipe above). Slog-message extension: `_tasks/2026-04-28-deploy-cleanup-on-interrupt/03-tech-plan.md` §13.8 + `20-linus-impl-review-iter2.md`.

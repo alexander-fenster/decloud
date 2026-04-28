@@ -19,6 +19,11 @@ Tactical reference for the Decloud codebase. Each file is a dense decision recor
 - `error-wrap-discipline.md` — `%w: %w` not `%w: %v`; grep recipe + the regression test that locks it in (`TestDeploy_BuildErrorPreservesInnerSentinel`).
 - `optional-input-two-layer.md` — leaf-consumer defensive return + orchestrator guard, both layers, no coupling; the `Capture("")` / `if envFile != ""` shape generalizes.
 - `gomock-inorder-sequencing.md` — pin orchestrator step ordering with `gomock.InOrder`; contract test not implementation test.
+- `cleanup-context-discipline.md` — orchestrator cleanup MUST run on a `context.Background()`-derived bounded context, never the caller's request ctx; otherwise SIGINT cancels the cleanup it triggered. Helper: `newCleanupContext()` in `internal/deploy/service.go`.
+- `label-gated-orphan-recovery.md` — recover orphaned named artefacts on next run by gating on a creator-set label, not on the name alone; `decloud.service=<name>` plus the `Inspect → state+labels` JSON shape.
+- `exit-code-sentinel-not-context-err.md` — CLI exit-code mapping matches the package sentinel (`deploy.ErrInterrupted`) only; bare `context.Canceled` / `context.DeadlineExceeded` route to `ExitInternal` and the negative test cases lock that contract.
+- `gomock-fifo-matching.md` — `go.uber.org/mock` matches expectations FIFO, not LIFO; harness `AnyTimes()` defaults need an explicit opt-out option for tests that want a different response.
+- `cancellation-symmetry-audit.md` — when fixing a `context.Canceled` mis-wrap at one site, audit every sibling forward-progress branch on the same request ctx; Linus's iter2 Issue 1 was the §3.4.5 sibling caught only on impl re-review, not in the v2 plan pass.
 
 ## Implementation gotchas
 
@@ -28,7 +33,8 @@ Tactical reference for the Decloud codebase. Each file is a dense decision recor
 
 ## Review discipline
 
-- `doc-grep-discipline.md` — when `_docs/*.md` shows a literal error string, `grep -F` it against the source. Two M1 doc-fab incidents (`install.md:173`, `:189`) both showed renderings that didn't match the wrap chain the code actually emitted. If the bytes are genuinely variable, frame them as variable — don't fabricate a clean example.
+- `doc-grep-discipline.md` — when `_docs/*.md` shows a literal error string, `grep -F` it against the source. Two M1 doc-fab incidents (`install.md:173`, `:189`) both showed renderings that didn't match the wrap chain the code actually emitted. If the bytes are genuinely variable, frame them as variable — don't fabricate a clean example. Extension: applies to slog messages quoted in operator runbooks too (`usage.md:235`/`:237` drift across deploy-cleanup iter2).
+- `fix-now-while-fresh.md` — Don's repeated rule for in-task defects: fix in scope when mechanical + same-file + <5-minute floor + on-theme; defer when it requires new architecture or a different package's review surface. Captures the lockdown rationale across deploy-cleanup v2.1 and v2.2.
 - `stderr-substring-canary.md` — branching on a third-party tool's stderr is fundamentally brittle; the mitigation is a canary test that fails loudly when the upstream wording shifts. Match canonical strings only, co-locate detection with its single caller (not the driver), lock with sub-tests-per-substring + a negative branch assertion. Live example: `isPortsBoundErr` in `internal/caddy/manager.go`.
 
 ## Cross-references for shapes worth borrowing

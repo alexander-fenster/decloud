@@ -26,7 +26,28 @@ var (
 	ErrRun         = errors.New("deploy: docker run failed")
 	ErrReadiness   = errors.New("deploy: readiness probe failed")
 	ErrCaddyReload = errors.New("deploy: caddy reload failed")
+	ErrInterrupted = errors.New("deploy: cancelled by user")
 )
+
+// cleanupTimeout bounds post-failure cleanup work: 10s docker stop grace,
+// plus buffer for docker rm and a rollback docker run.
+const cleanupTimeout = 30 * time.Second
+
+// newCleanupContext returns a context derived from context.Background() with
+// cleanupTimeout. It is intentionally NOT derived from the caller's ctx so
+// that user cancellation does not abort cleanup. Callers MUST invoke the
+// returned cancel func via defer.
+func newCleanupContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), cleanupTimeout)
+}
+
+// isCancellation reports whether err is a context cancellation or deadline.
+// Used by Deploy and its helpers to discriminate user-cancelled paths from
+// genuine failures so the orchestrator can wrap as ErrInterrupted (exit 130)
+// rather than the step-specific ErrRun/ErrReadiness sentinels.
+func isCancellation(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
 
 type Request struct {
 	Name             string
@@ -175,12 +196,47 @@ func (d *serviceDeployer) Deploy(ctx context.Context, req Request) error {
 				inspect, ierr := d.deps.Driver.Inspect(ctx, containerName)
 				if ierr == nil && inspect.State == "running" {
 					logger.Error("stop old container failed and still running", "step", "stop_old", "error", err)
+					if isCancellation(err) {
+						return fmt.Errorf("%w: %w", ErrInterrupted, err)
+					}
 					return fmt.Errorf("%w: stop previous container: %w", ErrRun, err)
 				}
 			}
 		}
 		if err := d.deps.Driver.Remove(ctx, containerName); err != nil && !errors.Is(err, dockerdrv.ErrContainerNotFound) {
+			if isCancellation(err) {
+				return fmt.Errorf("%w: %w", ErrInterrupted, err)
+			}
 			return fmt.Errorf("%w: remove previous container: %w", ErrRun, err)
+		}
+	} else {
+		inspect, err := d.deps.Driver.Inspect(ctx, containerName)
+		if err != nil {
+			if isCancellation(err) {
+				return fmt.Errorf("%w: %w", ErrInterrupted, err)
+			}
+			return fmt.Errorf("%w: inspect orphan check %s: %w", ErrRun, containerName, err)
+		}
+		if inspect.State != "absent" {
+			labelVal := inspect.Labels["decloud.service"]
+			if labelVal != req.Name {
+				return fmt.Errorf("%w: container %s exists but was not created by decloud (label decloud.service=%q does not match %q); refusing to remove. Run 'docker rm -f %s' manually if you want to claim this name, or pick a different service name",
+					ErrRun, containerName, labelVal, req.Name, containerName)
+			}
+			logger.Warn("removing orphan container from prior interrupted deploy",
+				"container", containerName, "state", inspect.State)
+			if err := d.deps.Driver.Stop(ctx, containerName, 10*time.Second); err != nil && !errors.Is(err, dockerdrv.ErrContainerNotFound) {
+				if isCancellation(err) {
+					return fmt.Errorf("%w: %w", ErrInterrupted, err)
+				}
+				return fmt.Errorf("%w: cleaning up orphan container %s; please run 'docker rm -f %s' and retry: %w", ErrRun, containerName, containerName, err)
+			}
+			if err := d.deps.Driver.Remove(ctx, containerName); err != nil && !errors.Is(err, dockerdrv.ErrContainerNotFound) {
+				if isCancellation(err) {
+					return fmt.Errorf("%w: %w", ErrInterrupted, err)
+				}
+				return fmt.Errorf("%w: cleaning up orphan container %s; please run 'docker rm -f %s' and retry: %w", ErrRun, containerName, containerName, err)
+			}
 		}
 	}
 
@@ -195,7 +251,12 @@ func (d *serviceDeployer) Deploy(ctx context.Context, req Request) error {
 	if _, err := d.deps.Driver.Run(ctx, runReq); err != nil {
 		logger.Error("run new container failed", "step", "run_new", "error", err)
 		if hasPrev {
-			d.restoreOldContainer(ctx, prev)
+			cleanupCtx, cleanupCancel := newCleanupContext()
+			defer cleanupCancel()
+			d.restoreOldContainer(cleanupCtx, prev)
+		}
+		if isCancellation(err) {
+			return fmt.Errorf("%w: %w", ErrInterrupted, err)
 		}
 		return fmt.Errorf("%w: %w", ErrRun, err)
 	}
@@ -211,11 +272,27 @@ func (d *serviceDeployer) Deploy(ctx context.Context, req Request) error {
 		spec.HTTPPath = "/healthz"
 	}
 	if err := d.probe.Wait(ctx, containerName, spec, req.Port); err != nil {
-		logger.Error("readiness failed", "step", "readiness", "error", err)
-		_ = d.deps.Driver.Stop(ctx, containerName, 10*time.Second)
-		_ = d.deps.Driver.Remove(ctx, containerName)
+		cancelled := isCancellation(err)
+		if cancelled {
+			logger.Info("deploy cancelled during readiness wait", "step", "readiness")
+		} else {
+			logger.Error("readiness failed", "step", "readiness", "error", err)
+		}
+		cleanupCtx, cleanupCancel := newCleanupContext()
+		defer cleanupCancel()
+		if stopErr := d.deps.Driver.Stop(cleanupCtx, containerName, 10*time.Second); stopErr != nil && !errors.Is(stopErr, dockerdrv.ErrContainerNotFound) {
+			logger.Warn("cleanup failed; manual removal may be required",
+				"container", containerName, "error", stopErr)
+		}
+		if rmErr := d.deps.Driver.Remove(cleanupCtx, containerName); rmErr != nil && !errors.Is(rmErr, dockerdrv.ErrContainerNotFound) {
+			logger.Warn("cleanup failed; manual removal may be required",
+				"container", containerName, "error", rmErr)
+		}
 		if hasPrev {
-			d.restoreOldContainer(ctx, prev)
+			d.restoreOldContainer(cleanupCtx, prev)
+		}
+		if cancelled {
+			return fmt.Errorf("%w: %w", ErrInterrupted, err)
 		}
 		if errors.Is(err, ErrReadiness) {
 			return err
@@ -257,15 +334,26 @@ func (d *serviceDeployer) Deploy(ctx context.Context, req Request) error {
 	}
 	if err := d.deps.Store.Save(ctx, svc); err != nil {
 		logger.Error("registry save failed", "step", "save_registry", "error", err)
+		cleanupCtx, cleanupCancel := newCleanupContext()
+		defer cleanupCancel()
 		if errors.Is(err, registry.ErrPartialWrite) {
-			if rbErr := d.deps.Store.DeleteOrphanConfig(ctx, req.Name); rbErr != nil {
+			if rbErr := d.deps.Store.DeleteOrphanConfig(cleanupCtx, req.Name); rbErr != nil {
 				logger.Error("rollback: delete orphan config failed", "error", rbErr)
 			}
 		}
-		_ = d.deps.Driver.Stop(ctx, containerName, 10*time.Second)
-		_ = d.deps.Driver.Remove(ctx, containerName)
+		if stopErr := d.deps.Driver.Stop(cleanupCtx, containerName, 10*time.Second); stopErr != nil && !errors.Is(stopErr, dockerdrv.ErrContainerNotFound) {
+			logger.Warn("cleanup failed; manual removal may be required",
+				"container", containerName, "error", stopErr)
+		}
+		if rmErr := d.deps.Driver.Remove(cleanupCtx, containerName); rmErr != nil && !errors.Is(rmErr, dockerdrv.ErrContainerNotFound) {
+			logger.Warn("cleanup failed; manual removal may be required",
+				"container", containerName, "error", rmErr)
+		}
 		if hasPrev {
-			d.restoreOldContainer(ctx, prev)
+			d.restoreOldContainer(cleanupCtx, prev)
+		}
+		if isCancellation(err) {
+			return fmt.Errorf("%w: %w", ErrInterrupted, err)
 		}
 		return fmt.Errorf("registry save: %w", err)
 	}
@@ -279,7 +367,7 @@ func (d *serviceDeployer) Deploy(ctx context.Context, req Request) error {
 	return nil
 }
 
-func (d *serviceDeployer) restoreOldContainer(ctx context.Context, prev *registry.Service) {
+func (d *serviceDeployer) restoreOldContainer(cleanupCtx context.Context, prev *registry.Service) {
 	if prev == nil {
 		return
 	}
@@ -291,7 +379,7 @@ func (d *serviceDeployer) restoreOldContainer(ctx context.Context, prev *registr
 		Restart: prev.Config.Run.Restart,
 		Port:    prev.Config.Run.Port,
 	}
-	if _, err := d.deps.Driver.Run(ctx, runReq); err != nil {
+	if _, err := d.deps.Driver.Run(cleanupCtx, runReq); err != nil {
 		slog.Error("rollback: failed to restart previous container",
 			"service", prev.Config.Name, "error", err)
 		return

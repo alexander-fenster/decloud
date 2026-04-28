@@ -144,10 +144,11 @@ func TestCLIDriver_RemoveArgs(t *testing.T) {
 	assert.Equal(t, []string{"rm", "decloud-foo"}, records[0].Args)
 }
 
-// docker inspect decloud-foo --format '{{.Id}} {{.State.Status}}'
+// docker inspect decloud-foo --format '{"id":{{json .Id}},"state":{{json .State.Status}},"labels":{{json .Config.Labels}}}'
 func TestCLIDriver_InspectArgsAndParse(t *testing.T) {
 	var records []recordedCmd
-	d := driverWith(scriptedFactory(&records, "echo cid12345 running"))
+	d := driverWith(scriptedFactory(&records,
+		`echo '{"id":"cid12345","state":"running","labels":null}'`))
 
 	res, err := d.Inspect(context.Background(), "decloud-foo")
 	require.NoError(t, err)
@@ -260,6 +261,31 @@ func TestCLIDriver_InspectAbsentContainerReturnsAbsentState(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "absent", res.State)
 	assert.Equal(t, "", res.ContainerID)
+}
+
+// docker inspect decloud-foo --format '{"id":{{json .Id}},"state":{{json .State.Status}},"labels":{{json .Config.Labels}}}'
+// Labels JSON-emitted so values containing whitespace/=/quotes parse safely (v2 §3.5.1).
+func TestCLIDriver_InspectParsesDecloudServiceLabel(t *testing.T) {
+	d := driverWith(scriptedFactory(&[]recordedCmd{},
+		`echo '{"id":"cid12345","state":"running","labels":{"decloud.service":"foo"}}'`))
+
+	res, err := d.Inspect(context.Background(), "decloud-foo")
+	require.NoError(t, err)
+	assert.Equal(t, "cid12345", res.ContainerID)
+	assert.Equal(t, "running", res.State)
+	assert.Equal(t, "foo", res.Labels["decloud.service"],
+		"Labels map must surface decloud.service from docker JSON output")
+}
+
+func TestCLIDriver_InspectReturnsNilLabelsWhenContainerHasNone(t *testing.T) {
+	d := driverWith(scriptedFactory(&[]recordedCmd{},
+		`echo '{"id":"cid12345","state":"running","labels":null}'`))
+
+	res, err := d.Inspect(context.Background(), "decloud-foo")
+	require.NoError(t, err)
+	assert.Equal(t, "running", res.State)
+	assert.Nil(t, res.Labels,
+		"Labels must be nil when docker reports no labels on the container")
 }
 
 // docker pull caddy:2

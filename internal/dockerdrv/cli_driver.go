@@ -3,6 +3,7 @@ package dockerdrv
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
@@ -111,8 +112,9 @@ func (d *cliDriver) Remove(ctx context.Context, name string) error {
 }
 
 func (d *cliDriver) Inspect(ctx context.Context, name string) (InspectResult, error) {
+	const formatArg = `{"id":{{json .Id}},"state":{{json .State.Status}},"labels":{{json .Config.Labels}}}`
 	var stdout, stderr bytes.Buffer
-	cmd := d.cmd(ctx, "docker", "inspect", name, "--format", "{{.Id}} {{.State.Status}}")
+	cmd := d.cmd(ctx, "docker", "inspect", name, "--format", formatArg)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -121,11 +123,15 @@ func (d *cliDriver) Inspect(ctx context.Context, name string) (InspectResult, er
 		}
 		return InspectResult{}, fmt.Errorf("docker inspect: %w; stderr=%q", err, stderr.String())
 	}
-	parts := strings.Fields(strings.TrimSpace(stdout.String()))
-	if len(parts) < 2 {
-		return InspectResult{}, fmt.Errorf("docker inspect: unexpected output %q", stdout.String())
+	var parsed struct {
+		ID     string            `json:"id"`
+		State  string            `json:"state"`
+		Labels map[string]string `json:"labels"`
 	}
-	return InspectResult{ContainerID: parts[0], State: parts[1]}, nil
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &parsed); err != nil {
+		return InspectResult{}, fmt.Errorf("docker inspect: parse output %q: %w", stdout.String(), err)
+	}
+	return InspectResult{ContainerID: parsed.ID, State: parsed.State, Labels: parsed.Labels}, nil
 }
 
 func (d *cliDriver) Logs(ctx context.Context, name string, opts LogsOptions) error {

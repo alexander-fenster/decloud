@@ -62,6 +62,26 @@ Five items punted out of M1 with explicit Don/Linus sign-off. Each was a non-blo
 
 **Originator:** Joel §8.5 of `_tasks/2026-04-27-caddy-container-connection-refused/006-joel-tech-plan-v2.md`. Acknowledged by Don in `_tasks/2026-04-27-caddy-container-connection-refused/012-don-final-review.md` §5.1. Reaffirmed in `_tasks/2026-04-27-caddy-container-connection-refused/013-joel-tech-plan-cycle2.md` §5.
 
+## 7. Apply cleanup-context pattern to caddy/manager.go
+
+**Where:** `internal/caddy/manager.go` — `Manager.Up`/`Down`/`Reload` and any `docker run`/`docker stop`/`docker rm` invocations therein.
+
+**Why deferred:** scoped tight per `_tasks/2026-04-28-deploy-cleanup-on-interrupt/`. Same shape of bug as the deploy-service cleanup-on-interrupt fix (cleanup tied to user-cancellable ctx); user reported the deploy variant, not the caddy variant. The cleanup-context pattern (cleanup ctx derived from `context.Background()` with a 30s timeout, distinct from the request ctx) is locked in by that task and re-applies cleanly to the caddy code path.
+
+**Fix shape:** identify cleanup blocks in `manager.go`, replace request-ctx with `newCleanupContext()`-derived ctx (move the helper from `internal/deploy/service.go` to a shared location if both packages need it, OR copy locally — bikeshed). Mirror the audit-log-on-cleanup-failure pattern from `_tasks/2026-04-28-deploy-cleanup-on-interrupt/03-tech-plan.md` §3.4.1.
+
+**Originator:** Linus, `_tasks/2026-04-28-deploy-cleanup-on-interrupt/04-linus-review.md` Issue 5. Acknowledged by Don in `_tasks/2026-04-28-deploy-cleanup-on-interrupt/02-plan.md` §12.5.
+
+## 8. `restoreOldContainer` failures should surface in the error chain
+
+**Where:** `internal/deploy/service.go:282-300` (`restoreOldContainer`). Currently logs via `slog.Error` and returns silently.
+
+**Why deferred:** pre-existing bug, scoped tight per `_tasks/2026-04-28-deploy-cleanup-on-interrupt/`. The cleanup-context fix in that task strictly improves the failure mode (rollback now actually runs on a non-cancelled ctx) but doesn't fix the surfacing. Doing both in one task expanded scope; punt.
+
+**Fix shape:** change `restoreOldContainer` signature to return `error`. At each call site (3 in `Deploy` after that task), if the cleanup-path err is non-nil and `restoreOldContainer` ALSO returns an error, the surfaced error to the user should mention both ("readiness failed AND rollback to previous container failed"). `errors.Join` is the right tool. New test asserting both errors surface.
+
+**Originator:** Linus, `_tasks/2026-04-28-deploy-cleanup-on-interrupt/04-linus-review.md` Issue 6. Acknowledged by Don in `_tasks/2026-04-28-deploy-cleanup-on-interrupt/02-plan.md` §12.6.
+
 ---
 
 ## Maintenance note

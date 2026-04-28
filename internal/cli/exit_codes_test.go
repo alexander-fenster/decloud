@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -36,6 +37,10 @@ func TestExitCodeFor_AllSentinels(t *testing.T) {
 		{"caddy-up-wrapped", fmt.Errorf("oops: %w", caddy.ErrCaddyUp), ExitRunFail},
 		{"caddy-down", caddy.ErrCaddyDown, ExitRunFail},
 		{"caddy-down-wrapped", fmt.Errorf("oops: %w", caddy.ErrCaddyDown), ExitRunFail},
+		{"interrupted", deploy.ErrInterrupted, ExitInterrupted},
+		{"interrupted-wrapped", fmt.Errorf("oops: %w", deploy.ErrInterrupted), ExitInterrupted},
+		{"context-canceled-bare", context.Canceled, ExitInternal},
+		{"context-deadline-bare", context.DeadlineExceeded, ExitInternal},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
