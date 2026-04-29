@@ -4,6 +4,54 @@ Decloud is a small, single-host platform-as-a-service for low-traffic services t
 
 It replaces a few specific workflows: Cloud Run services deployed via `gcloud run deploy --source .`, long-running services running as host `systemd` units, and Cron jobs scheduled with Google Cloud Scheduler. The expected operator is one person with SSH access to one Linux host.
 
+## Human written note
+
+This is the only section I typed manually, everything else is vibe-coded with Claude. You have been warned :)
+
+After realizing that my Google Cloud footprint has gone out of control and I have more than 20 Cloud Run services,
+the majority of them getting minimal traffic, I felt it's time to move out.  So I needed something to manage these
+services running on one Linux box, preferably with no pain related to SSL certificates. This project is a successful
+attempt of my "declouding", that is, moving everything from Cloud Run to a standalone setup.
+
+The setup is: a bunch of Docker containers, one per service, which takes care of isolation. A separate Docker container
+running Caddy; they are all in one Docker network so Caddy can reverse-proxy requests to the corresponding container.
+
+Locally, the deployment script looks like this:
+
+```sh
+#!/bin/sh
+
+git archive --format tar HEAD | gzip | \
+  ssh root@server 'cd /root/staging/service-name && rm -rf deploy && mkdir deploy && tar -C deploy -xz && sh deploy.sh'
+```
+
+On the server, the setup is as follows:
+
+```
+# cat /root/staging/service-name/deploy.sh
+SCRIPT_DIR=`dirname $0`
+STAGING_AREA=`realpath $SCRIPT_DIR`
+decloud deploy service --name service-name --host service-domain.example.com --port 8080 --env-file "${STAGING_AREA}/env.sh" "${STAGING_AREA}/deploy"
+```
+
+```
+# cat /root/staging/service-name/env.sh
+NODE_ENV=production
+TZ=America/Los_Angeles
+```
+
+If you need to preserve some files between container restarts, use `--mount` option.
+
+In general, this thing works, even though I haven't looked at the code; don't believe anything below, especially don't believe
+that the thing has integration tests: I never ran them. But it works! I'm serving my stuff with it now.
+
+If you read `CLAUDE.md` you will see that I'm using the agentic workflow as described by [@andreyvit](https://github.com/andreyvit) [here](https://tarantsov.com/all-star-zoo/),
+with minor changes. It consumes huge amount of tokens and time, but works!
+
+If you have questions, please feel free to contact me directly.
+
+**End of human written section.**
+
 ## Project status
 
 Decloud is mid-build. As of April 2026, only the milestones marked SHIPPED below are usable. See the [Roadmap](#roadmap) for what's next.
