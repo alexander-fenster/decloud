@@ -21,7 +21,7 @@ Per-file atomicity uses `os.CreateTemp` in the same dir + `Chmod` (defends again
 
 Loader rejects (`ErrPermissionMode`) if secrets file isn't 0600 or its dir isn't 0700, naming the offending path and observed mode. We do NOT silently fix — silently fixing hides the audit signal of whatever process broke them.
 
-Other loader rejection classes (all map to exit code 10 = `ExitConfigError`): `ErrNotFound`, `ErrSecretsMissing`, `ErrSchemaMismatch` (cross-file mismatch is also rejected), `ErrUnknownField` (strict mode), `ErrMountsNotSupported` (M1), `ErrInvalidStrategy` (M1).
+Other loader rejection classes (all map to exit code 10 = `ExitConfigError`): `ErrNotFound`, `ErrSecretsMissing`, `ErrSchemaMismatch` (cross-file mismatch is also rejected), `ErrUnknownField` (strict mode), `ErrInvalidMount` (malformed `mounts` entry — replaced the M1 `ErrMountsNotSupported` blanket rejection at M2), `ErrInvalidStrategy` (M1).
 
 ## Rejected alternatives
 

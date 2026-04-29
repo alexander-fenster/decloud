@@ -38,7 +38,7 @@ func ExitCodeFor(err error) int {
 		return ExitInterrupted
 	case errors.Is(err, errUsage):
 		return ExitUsageError
-	case errors.Is(err, registry.ErrMountsNotSupported),
+	case errors.Is(err, registry.ErrInvalidMount),
 		errors.Is(err, registry.ErrInvalidStrategy),
 		errors.Is(err, registry.ErrSchemaMismatch),
 		errors.Is(err, registry.ErrUnknownField),

@@ -52,15 +52,13 @@ Five items punted out of M1 with explicit Don/Linus sign-off. Each was a non-blo
 
 **Originator:** Kevlin S-NEW-2 + Rob subtle-behavior #1, `019-kevlin-rereview.md`.
 
-## 6. Docker-compose-based smoke integration test for M1 deploy + Caddy ingress
+## 6. ~~Docker-compose-based smoke integration test for M1 deploy + Caddy ingress~~
 
-**Where:** No file yet. Likely lives at `internal/integration/` (new package) or `_test/integration/`. Test invokes `decloud caddy up`, `decloud deploy service` against a real Docker daemon (CI runner with Docker-in-Docker, or a tagged opt-in test that requires `DECLOUD_INTEGRATION=1`), asserts a real HTTP request through Caddy reaches a real upstream container.
+**Status:** PARTIALLY DONE at M2. The `--mount`-only integration test shipped at M2 (see `_tasks/2026-04-28-m2-server-side-mounts/`); the curl-through-Caddy ingress half was split off and lives below as item 10. Reloader stderr `%q` revisit was split off and lives below as item 9. This entry stays one release per the maintenance note before deletion.
 
-**Why deferred:** Per `_ai/decisions/m1-test-strategy.md`, M1 is unit-tests-only against the gomock'd `Driver`. The bridge-DNS resolution path is locked architecturally by the `decloud-caddy`-on-`decloud`-network design (`_ai/decisions/caddy-runs-in-container.md`); the only thing a real-Docker test catches that unit tests miss is "is our argv actually accepted by docker?", and the argv-shape tests in `internal/dockerdrv/cli_driver_test.go` lock that argv byte-for-byte. Deferred from the caddy-container-connection-refused task per `_ai/decisions/m1-test-strategy.md`.
+**M2 delivery:** `internal/integration/mount_test.go` with `//go:build integration` tag, gated on `DECLOUD_INTEGRATION=1`. Pulls `nginx:alpine` via the real `dockerdrv.CLIDriver`, calls `driver.Run` directly with a `Volumes: [...]` shape carrying one bind ro mount, and asserts `docker exec cat /data/marker.txt` returns the marker bytes. Cleanup via `t.Cleanup` with idempotent `docker rm -f decloud-mounttest`. Does NOT exercise the deploy orchestrator (build, readiness, Caddyfile generation, reload) — those are split to item 10 (curl-through-Caddy ingress test) per Joel decision 8 of the M2 tech plan. The `nginx:alpine` choice (rather than alpine) is deliberate: nginx idles in the foreground via `nginx -g daemon off;`, so the container stays alive long enough for `docker exec`; alpine's default `/bin/sh` CMD exits under `docker run -d` (Linus's catch in `011-linus-impl-review.md` §5, fix in EXECUTION v2).
 
-**Fix shape:** New `integration_test.go` build-tagged with `//go:build integration`, requires `DECLOUD_INTEGRATION=1` to run, brings up Caddy, deploys a one-line nginx service, curls through Caddy, asserts 200 OK with nginx body. Tear down both containers and the network on completion. Cleanup must be idempotent (test failures must not leave dangling containers). Belongs to the next post-M1 milestone where we touch real Docker for the first time (the new M2 — server-side `--mount` — per the 2026-04-28 resequence); that milestone is also the natural home for revisiting reloader stderr `%q` quoting, so the integration test can cover both improvements.
-
-**Originator:** Joel §8.5 of `_tasks/2026-04-27-caddy-container-connection-refused/006-joel-tech-plan-v2.md`. Acknowledged by Don in `_tasks/2026-04-27-caddy-container-connection-refused/012-don-final-review.md` §5.1. Reaffirmed in `_tasks/2026-04-27-caddy-container-connection-refused/013-joel-tech-plan-cycle2.md` §5.
+**Originator:** Joel §8.5 of `_tasks/2026-04-27-caddy-container-connection-refused/006-joel-tech-plan-v2.md`. Acknowledged by Don in `_tasks/2026-04-27-caddy-container-connection-refused/012-don-final-review.md` §5.1. Reaffirmed in `_tasks/2026-04-27-caddy-container-connection-refused/013-joel-tech-plan-cycle2.md` §5. Split + partial-ship rationale: `_tasks/2026-04-28-m2-server-side-mounts/003-joel-tech-plan.md` Decisions 8 and 9.
 
 ## 7. Apply cleanup-context pattern to caddy/manager.go
 
@@ -81,6 +79,38 @@ Five items punted out of M1 with explicit Don/Linus sign-off. Each was a non-blo
 **Fix shape:** change `restoreOldContainer` signature to return `error`. At each call site (3 in `Deploy` after that task), if the cleanup-path err is non-nil and `restoreOldContainer` ALSO returns an error, the surfaced error to the user should mention both ("readiness failed AND rollback to previous container failed"). `errors.Join` is the right tool. New test asserting both errors surface.
 
 **Originator:** Linus, `_tasks/2026-04-28-deploy-cleanup-on-interrupt/04-linus-review.md` Issue 6. Acknowledged by Don in `_tasks/2026-04-28-deploy-cleanup-on-interrupt/02-plan.md` §12.6.
+
+## 9. Reloader stderr `%q` quoting revisit
+
+**Where:** `internal/caddy/reloader.go:69`, `:72`, `:80` — three sites use `fmt.Errorf(... stderr=%q ...)` to surface Caddy's stderr. `%q` works for ASCII output but `strconv.Quote`-escapes Unicode in a way that may not match what operators want to read in a log line.
+
+**Why deferred:** Originally bundled with item 6 (M1.x backlog) as something the next-real-Docker milestone would naturally cover. M2 declined to bundle: the `%q` issue is orthogonal to mounts (logging-formatting decision in the caddy reloader), and a fix would invite "did you audit the other `%q` sites?" — a different review surface. Split out of item 6 in `_tasks/2026-04-28-m2-server-side-mounts/003-joel-tech-plan.md` Decision 9.
+
+**Fix shape:** audit the three sites, decide whether `%q` is right against alternatives (raw stderr appended with `\n` indent, JSON-quoted with explicit Unicode handling, `strings.TrimSpace` + bare). Pick one rendering and apply uniformly. Decision and writeup at fix time; not a precommitment.
+
+**Originator:** Don §9 of `_tasks/2026-04-28-m2-server-side-mounts/002-don-plan.md`; Joel Decision 9 of `003-joel-tech-plan.md`.
+
+## 10. Curl-through-Caddy integration test
+
+**Where:** No file yet. Likely `internal/integration/ingress_test.go` (new), peer to the M2 `internal/integration/mount_test.go` that ships the `--mount`-only half.
+
+**Why deferred:** Originally bundled with item 6 as the second half of the integration smoke test. M2 shipped the mount half only — the failure modes of mount verification (`docker exec cat`) and ingress verification (TLS, Caddyfile generation, port publishing) don't share a debugging surface, so bundling them compounds risk: a curl-through-Caddy failure on an IPv6-disabled host would block the M2 ship for a non-mount reason. Split out in `_tasks/2026-04-28-m2-server-side-mounts/003-joel-tech-plan.md` Decision 8.
+
+**Fix shape:** new `internal/integration/ingress_test.go` build-tagged with `//go:build integration`, gated on `DECLOUD_INTEGRATION=1`. Brings up Caddy + a deploy with an HTTP host, asserts a curl through Caddy returns the expected upstream body. Idempotent cleanup of both containers and the named volumes. Picks up the same `t.TempDir()` + `t.Cleanup` discipline the M2 mount test already establishes.
+
+**Originator:** Joel §8.5 of `_tasks/2026-04-27-caddy-container-connection-refused/006-joel-tech-plan-v2.md` (originally bundled in item 6). Split into its own entry per Joel Decision 8 of `_tasks/2026-04-28-m2-server-side-mounts/003-joel-tech-plan.md`.
+
+## 11. Consolidate `Driver.Run` and `Driver.RunWithOptions`
+
+**Where:** `internal/dockerdrv/driver.go` (`Driver` interface), `internal/dockerdrv/cli_driver.go` (`Run` and `RunWithOptions` impls), `internal/dockerdrv/mocks/mock_driver.go` (regen), and ~20 `Driver.EXPECT().Run(...)` call sites in `internal/deploy/service_test.go` + `internal/deploy/lifecycle_test.go`.
+
+**Why deferred:** Decision 4 of `_tasks/2026-04-28-m2-server-side-mounts/003-joel-tech-plan.md` picked Option β (add `Volumes []VolumeMount` field to existing `RunRequest`) over Option α (drop `Run` and route everything through `RunWithOptions`). β kept the M2 diff narrow and avoided rewriting every existing mock expectation; α is the structurally cleaner end-state where the driver has one run path instead of two.
+
+**Fix shape:** remove `Driver.Run`, switch every caller in `service.go`/`lifecycle.go` to `RunWithOptions`, regenerate `MockDriver`, rewrite `Driver.EXPECT().Run(...)` to `Driver.EXPECT().RunWithOptions(...)`, retire `RunRequest` (or keep as a thin alias). Roughly one hour of mechanical work, zero behaviour change.
+
+**Originator:** Don §5 Option α of `_tasks/2026-04-28-m2-server-side-mounts/002-don-plan.md`; Joel Decision 4 of `003-joel-tech-plan.md`.
+
+**Future-author note (Linus Observation A, recorded at M2 closeout):** When picking up this consolidation, the unified `RunOptions` should grow `Cmd []string` so future integration tests (or one-shot job/migration runners at M5+) don't need to pick a specific image with an idle CMD. The M2 integration test exposed this gap: `alpine:3.19` exits under `docker run -d` because its default CMD is `/bin/sh` reading closed stdin; M2 worked around this by switching the test to `nginx:alpine` (which idles in the foreground). Adding `Cmd []string` to the consolidated `RunOptions` removes that constraint and aligns the run path with `ExecOptions.Cmd`. Source: `_tasks/2026-04-28-m2-server-side-mounts/011-linus-impl-review.md` §"Observation A".
 
 ---
 

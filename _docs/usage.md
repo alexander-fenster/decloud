@@ -1,6 +1,6 @@
 # Usage
 
-Operator-facing reference for the Decloud M1 CLI. For host setup, see [`install.md`](./install.md).
+Operator-facing reference for the Decloud CLI. For host setup, see [`install.md`](./install.md).
 
 Every command runs on the host that owns `/opt/decloud/`. The operator either SSHes in and runs `decloud` directly, or runs it through some other transport — Decloud does not care. There is no client binary in M1.
 
@@ -68,8 +68,86 @@ decloud deploy service [flags] <source-dir>
 | `--readiness-timeout` | duration | `60s` | no | Total wait before the deploy fails with exit 50. |
 | `--strategy` | string | `recreate` | no | Only `recreate` is accepted in M1. `blue_green` is rejected with exit 10 (M4). |
 | `--dockerfile` | string | `Dockerfile` | no | Path to the Dockerfile. Relative paths resolve under `<source-dir>` regardless of the cwd you invoke `decloud` from. Absolute paths are used as-is. |
-| `--mount` | string (repeatable) | none | no | Rejected with exit 10 in M1. Persistent volumes are M2. |
+| `--mount` | string (repeatable) | none | no | Persistent volume; `<host-path>:<container-path>[:ro]` (bind) or `<name>:<container-path>[:ro]` (named volume); repeatable. Bind sources must be absolute paths starting with `/`; named-volume sources must match `[a-zA-Z0-9][a-zA-Z0-9_.-]+`. The container path must be absolute. Default is read-write; only `:ro` is accepted as a mode flag (`:rw`, `:z`, `:Z`, `:cached`, `:delegated` are rejected). Two `--mount` flags targeting the same container path are rejected at parse time with exit 2; a hand-edited TOML carrying the same shape is rejected at load time with exit 10. |
 | `--config-root` | string | `$DECLOUD_ROOT` or `/opt/decloud` | no | Root directory of the Decloud tree. Persistent flag, applies to every subcommand. Logs are written to `<config-root>/logs/decloud.log` (the flag controls log placement as well as registry/Caddy paths). |
+
+Bind-mount source paths are not pre-checked. If you pass `--mount /missing-path:/data` and `/missing-path` does not exist on the host, the deploy fails at the `docker run` step with a Docker daemon error referencing the path (typical text: `error while creating mount source path '/missing-path': mkdir ...`), exit 40. To verify before deploying:
+
+```sh
+ls -ld /path/to/source
+```
+
+Decloud deliberately does not stat the source at parse or load time. Bind sources can legitimately appear after deploy time — for example an automounted disk that is not yet mounted at `decloud start` after a host reboot — and a stat-check would punish that recoverable state. The trade-off is one bad first-deploy error message in exchange for a `decloud start` that survives a reboot ordering race.
+
+### Mount examples
+
+Bind a host directory read-write at `/data`:
+
+```sh
+decloud deploy service \
+  --name myservice \
+  --host myservice.example.com \
+  --port 8080 \
+  --mount /var/lib/myservice:/data \
+  ./myservice
+```
+
+Bind a host file read-only (a credentials file, for example):
+
+```sh
+decloud deploy service \
+  --name myservice \
+  --host myservice.example.com \
+  --port 8080 \
+  --mount /etc/decloud/secrets/myservice/gcp.json:/secrets/gcp.json:ro \
+  ./myservice
+```
+
+Use a Docker named volume (Docker auto-creates it on first use; survives `decloud unregister` unless removed with `docker volume rm`):
+
+```sh
+decloud deploy service \
+  --name myservice \
+  --host myservice.example.com \
+  --port 8080 \
+  --mount myservice_state:/var/lib/myservice \
+  ./myservice
+```
+
+Mix bind and named volumes by repeating `--mount`:
+
+```sh
+decloud deploy service \
+  --name myservice \
+  --host myservice.example.com \
+  --port 8080 \
+  --mount myservice_data:/var/lib/myservice \
+  --mount /etc/ssl/myorg.pem:/etc/ssl/myorg.pem:ro \
+  ./myservice
+```
+
+Mounts persist with the service registration. `decloud start` and `decloud restart` re-attach the same set; you do not pass `--mount` again. To change the mount set, run `decloud deploy service` again with the new flags — the registry replaces the previous list.
+
+In the on-disk per-service TOML at `/opt/decloud/config/services/<name>.toml`, mounts are an array of tables under `[run]`:
+
+```toml
+[[run.mounts]]
+host_path      = "/var/lib/myservice"
+container_path = "/data"
+read_only      = false
+
+[[run.mounts]]
+host_path      = "myservice_state"
+container_path = "/var/lib/myservice"
+read_only      = false
+
+[[run.mounts]]
+host_path      = "/etc/ssl/myorg.pem"
+container_path = "/etc/ssl/myorg.pem"
+read_only      = true
+```
+
+The `host_path` field carries either an absolute host path (bind mount) or a Docker named-volume name (any value not starting with `/`). The on-disk schema stays at `schema_version = 1`; M1 reserved this shape and M2 populates it without touching the file format. Edit the TOML by hand at your own risk — the loader runs the same validation as `--mount` and rejects malformed entries with exit 10.
 
 The `env.sh` model. The script is sourced inside a hermetic `bash` invocation; whatever it `export`s ends up in the container's environment, never baked into the image. Arbitrary shell is allowed — computed values, conditional exports, subshell calls. The script is re-evaluated only at deploy time, so restarts are fast and reproducible. Borderline cases worth knowing:
 
@@ -95,8 +173,8 @@ If any step fails, the deploy aborts, surfaces a non-zero exit code, and does wh
 | Code | Constant | Meaning |
 |---|---|---|
 | `0` | `ExitOK` | Success. |
-| `2` | `ExitUsageError` | Missing or unknown flag, missing arguments, internal usage misuse. |
-| `10` | `ExitConfigError` | Registry rejection (unknown service, schema mismatch, bad file mode, missing secrets, `--mount` used, `--strategy` other than `recreate`); explicit `--env-file=<path>` pointing at a missing or unreadable file; `decloud stop`, `start`, `restart`, or `logs` against a container that is not registered. |
+| `2` | `ExitUsageError` | Missing or unknown flag, missing arguments, internal usage misuse, malformed `--mount` value at the command line (bad component count, missing absolute container path, unsupported mode flag, duplicate container path across `--mount` flags). |
+| `10` | `ExitConfigError` | Registry rejection (unknown service, schema mismatch, bad file mode, missing secrets, `--strategy` other than `recreate`, malformed `--mount` in a hand-edited TOML); explicit `--env-file=<path>` pointing at a missing or unreadable file; `decloud stop`, `start`, `restart`, or `logs` against a container that is not registered. |
 | `20` | `ExitEnvCaptureFail` | `env.sh` failed to source or capture (readonly conflict, syntax error, non-zero exit). |
 | `30` | `ExitBuildFail` | `docker build` failed. |
 | `40` | `ExitRunFail` | A docker driver call failed: `docker run`, `docker start`, `docker inspect`, `docker logs`, `docker network create`, or any failure from `decloud caddy up` / `decloud caddy down`. Also returned when a fresh deploy finds an existing `decloud-<name>` container that lacks the `decloud.service=<name>` label (see [§8](#8-interrupting-a-deploy-ctrlc)). `docker stop` against a non-existent container surfaces as exit 10, not 40. |

@@ -58,7 +58,8 @@ func newDeployServiceCmd(rc *rootContext) *cobra.Command {
 	cmd.Flags().StringSliceVar(&f.Hosts, "host", nil, "public hostname(s); repeatable")
 	cmd.Flags().IntVar(&f.Port, "port", 0, "container listen port (required)")
 	cmd.Flags().StringVar(&f.EnvFile, "env-file", "", "path to env.sh (default: <source-dir>/env.sh if present)")
-	cmd.Flags().StringSliceVar(&f.Mounts, "mount", nil, "M1: rejected with ExitConfigError (M2 only)")
+	cmd.Flags().StringArrayVar(&f.Mounts, "mount", nil,
+		"persistent volume; <host-path>:<container-path>[:ro] (bind) or <name>:<container-path>[:ro] (named volume); repeatable")
 	cmd.Flags().StringVar(&f.ReadinessPath, "readiness-path", "/healthz", "HTTP readiness path")
 	cmd.Flags().DurationVar(&f.ReadinessTimeout, "readiness-timeout", 60*time.Second, "total readiness wait")
 	cmd.Flags().StringVar(&f.Strategy, "strategy", "recreate", "deploy strategy (M1: recreate only)")
@@ -68,8 +69,9 @@ func newDeployServiceCmd(rc *rootContext) *cobra.Command {
 }
 
 func runDeployService(ctx context.Context, rc *rootContext, f *deployServiceFlags, sourceDir string) error {
-	if len(f.Mounts) > 0 {
-		return fmt.Errorf("--mount is not supported until M2: %w", registry.ErrMountsNotSupported)
+	mounts, err := parseMountFlags(f.Mounts)
+	if err != nil {
+		return err
 	}
 	if f.Strategy != "recreate" {
 		return fmt.Errorf("--strategy=%q: only \"recreate\" is supported in M1: %w", f.Strategy, registry.ErrInvalidStrategy)
@@ -100,6 +102,7 @@ func runDeployService(ctx context.Context, rc *rootContext, f *deployServiceFlag
 		Hosts:            f.Hosts,
 		Port:             f.Port,
 		EnvFile:          envFile,
+		Mounts:           mounts,
 		ReadinessPath:    f.ReadinessPath,
 		ReadinessTimeout: f.ReadinessTimeout,
 		Strategy:         f.Strategy,
@@ -157,4 +160,30 @@ func buildProductionCaddyManager(paths config.Paths) (caddy.Manager, error) {
 		Driver: dockerdrv.NewCLIDriver(),
 		Paths:  paths,
 	}), nil
+}
+
+// parseMountFlags converts repeatable --mount string values into validated
+// []registry.Mount entries. CLI failures wrap errUsage (exit 2); the loader's
+// equivalent path wraps ErrInvalidMount (exit 10) — they are distinct error
+// chains by design (see _tasks/2026-04-28-m2-server-side-mounts/005-joel-
+// tech-plan-addendum.md, Issue 1). Do not call registry.ValidateMounts from
+// here; its ErrInvalidMount wrap would land this in exit 10 by accident of
+// case ordering in exit_codes.go.
+func parseMountFlags(raw []string) ([]registry.Mount, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make([]registry.Mount, 0, len(raw))
+	for _, s := range raw {
+		m, err := registry.ParseMountString(s)
+		if err != nil {
+			return nil, fmt.Errorf("--mount %q: %s: %w", s, err.Error(), errUsage)
+		}
+		out = append(out, m)
+	}
+	if first, dup, ok := registry.FindDuplicateTarget(out); ok {
+		return nil, fmt.Errorf("--mount %q: duplicate container_path (also at --mount[%d]): %w",
+			out[dup].ContainerPath, first, errUsage)
+	}
+	return out, nil
 }

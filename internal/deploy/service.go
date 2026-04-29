@@ -56,6 +56,7 @@ type Request struct {
 	Hosts            []string
 	Port             int
 	EnvFile          string
+	Mounts           []registry.Mount
 	ReadinessPath    string
 	ReadinessTimeout time.Duration
 	Strategy         string
@@ -247,6 +248,7 @@ func (d *serviceDeployer) Deploy(ctx context.Context, req Request) error {
 		Env:     captured,
 		Restart: "unless-stopped",
 		Port:    req.Port,
+		Volumes: toVolumeMounts(req.Mounts),
 	}
 	if _, err := d.deps.Driver.Run(ctx, runReq); err != nil {
 		logger.Error("run new container failed", "step", "run_new", "error", err)
@@ -315,7 +317,7 @@ func (d *serviceDeployer) Deploy(ctx context.Context, req Request) error {
 				Network: "decloud",
 				Port:    req.Port,
 				Restart: "unless-stopped",
-				Mounts:  []registry.Mount{},
+				Mounts:  req.Mounts,
 			},
 			Routes:    routes,
 			Strategy:  req.Strategy,
@@ -378,6 +380,7 @@ func (d *serviceDeployer) restoreOldContainer(cleanupCtx context.Context, prev *
 		Env:     prev.Secrets.Env,
 		Restart: prev.Config.Run.Restart,
 		Port:    prev.Config.Run.Port,
+		Volumes: toVolumeMounts(prev.Config.Run.Mounts),
 	}
 	if _, err := d.deps.Driver.Run(cleanupCtx, runReq); err != nil {
 		slog.Error("rollback: failed to restart previous container",
@@ -410,4 +413,24 @@ func (d *serviceDeployer) regenerateAndReload(ctx context.Context) error {
 		return fmt.Errorf("%w: caddy reload failed: %w; service is registered and running but Caddy is not routing traffic; run 'decloud caddy up' (and then 'decloud caddy reload' if needed) to restore routing", ErrCaddyReload, err)
 	}
 	return nil
+}
+
+// toVolumeMounts converts persisted registry mounts into the driver's
+// VolumeMount shape. The IsNamed flag is derived from the source string
+// using the convention documented on registry.Mount.IsNamed: bind sources
+// start with "/", named-volume sources do not.
+func toVolumeMounts(mounts []registry.Mount) []dockerdrv.VolumeMount {
+	if len(mounts) == 0 {
+		return nil
+	}
+	out := make([]dockerdrv.VolumeMount, 0, len(mounts))
+	for _, m := range mounts {
+		out = append(out, dockerdrv.VolumeMount{
+			Source:   m.HostPath,
+			Target:   m.ContainerPath,
+			ReadOnly: m.ReadOnly,
+			IsNamed:  m.IsNamed(),
+		})
+	}
+	return out
 }

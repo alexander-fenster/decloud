@@ -58,6 +58,9 @@ func (d *cliDriver) Run(ctx context.Context, req RunRequest) (string, error) {
 	for _, k := range keys {
 		args = append(args, "--env", k+"="+req.Env[k])
 	}
+	for _, v := range req.Volumes {
+		args = append(args, "-v", formatVolume(v))
+	}
 	args = append(args, "--label", "decloud.service="+strings.TrimPrefix(req.Name, "decloud-"))
 	args = append(args, req.Image)
 

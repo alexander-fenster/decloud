@@ -71,6 +71,7 @@ func (d *serviceDeployer) Start(ctx context.Context, name string) error {
 			Env:     prev.Secrets.Env,
 			Restart: prev.Config.Run.Restart,
 			Port:    prev.Config.Run.Port,
+			Volumes: toVolumeMounts(prev.Config.Run.Mounts),
 		}
 		if _, err := d.deps.Driver.Run(ctx, runReq); err != nil {
 			return fmt.Errorf("%w: run %s: %w", ErrRun, containerName, err)

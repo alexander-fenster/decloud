@@ -258,7 +258,7 @@ func TestStore_LoadAcceptsEmptyMountsArray(t *testing.T) {
 	assert.Empty(t, svc.Config.Run.Mounts)
 }
 
-func TestStore_LoadRejectsNonEmptyMounts(t *testing.T) {
+func TestStore_LoadAcceptsValidMounts(t *testing.T) {
 	store, paths := newStore(t)
 	body := `schema_version = 1
 name = "foo"
@@ -276,6 +276,10 @@ restart = "unless-stopped"
 host_path = "/host/data"
 container_path = "/data"
 read_only = false
+[[run.mounts]]
+host_path = "mydata"
+container_path = "/var/lib"
+read_only = true
 [readiness]
 kind = "http"
 http_path = "/healthz"
@@ -291,12 +295,86 @@ last_deployed_by = ""
 	writeConfigFile(t, paths, "foo", body)
 	writeSecretsFile(t, paths, "foo", validSecretsTOML, 0o700, 0o600)
 
-	_, err := store.Load(context.Background(), "foo")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, registry.ErrMountsNotSupported)
-	assert.Contains(t, err.Error(), "mounts are not supported until M2",
-		"loader rejection must name the milestone where mounts ship; "+
-			"keep in lockstep with _docs/usage.md and _ai/decisions/m1-scope.md")
+	svc, err := store.Load(context.Background(), "foo")
+	require.NoError(t, err)
+	require.Len(t, svc.Config.Run.Mounts, 2)
+	assert.Equal(t, registry.Mount{HostPath: "/host/data", ContainerPath: "/data", ReadOnly: false}, svc.Config.Run.Mounts[0])
+	assert.Equal(t, registry.Mount{HostPath: "mydata", ContainerPath: "/var/lib", ReadOnly: true}, svc.Config.Run.Mounts[1])
+}
+
+func TestStore_LoadRejectsInvalidMounts(t *testing.T) {
+	cases := []struct {
+		name     string
+		mountSec string
+	}{
+		{
+			"relative_container_path",
+			`[[run.mounts]]
+host_path = "/host/data"
+container_path = "data"
+read_only = false
+`,
+		},
+		{
+			"named_volume_invalid_chars",
+			`[[run.mounts]]
+host_path = "my data"
+container_path = "/var/lib"
+read_only = false
+`,
+		},
+		{
+			"duplicate_container_path",
+			`[[run.mounts]]
+host_path = "/host/a"
+container_path = "/data"
+read_only = false
+[[run.mounts]]
+host_path = "/host/b"
+container_path = "/data"
+read_only = false
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store, paths := newStore(t)
+			body := `schema_version = 1
+name = "foo"
+strategy = "recreate"
+[source]
+dir = "/srv/foo"
+[build]
+dockerfile = "Dockerfile"
+image_ref = "decloud-foo:x"
+[run]
+network = "decloud"
+port = 8080
+restart = "unless-stopped"
+` + tc.mountSec + `[readiness]
+kind = "http"
+http_path = "/healthz"
+timeout_secs = 60
+interval_secs = 2
+[state]
+last_deploy_id = ""
+built_image_id = ""
+container_id = ""
+container_name = ""
+last_deployed_by = ""
+`
+			cfgPath := writeConfigFile(t, paths, "foo", body)
+			writeSecretsFile(t, paths, "foo", validSecretsTOML, 0o700, 0o600)
+
+			_, err := store.Load(context.Background(), "foo")
+			require.Error(t, err)
+			assert.ErrorIs(t, err, registry.ErrInvalidMount)
+			assert.Contains(t, err.Error(), cfgPath,
+				"loader error must name the on-disk path so the operator knows which file to fix")
+			assert.Regexp(t, `mount\[\d+\]`, err.Error(),
+				"loader error must name the offending mount index")
+		})
+	}
 }
 
 func TestStore_LoadRejectsInvalidStrategy(t *testing.T) {

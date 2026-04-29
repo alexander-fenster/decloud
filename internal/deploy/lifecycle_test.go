@@ -254,6 +254,32 @@ func TestLifecycle_StartFromAbsentReRunsContainer(t *testing.T) {
 	assert.Equal(t, prev.Secrets.Env, seen.Env)
 }
 
+func TestLifecycle_StartAbsentBranchPassesVolumesToDriver(t *testing.T) {
+	h := newLifecycleHarness(t)
+	prev := newRegisteredService()
+	prev.Config.Run.Mounts = []registry.Mount{
+		{HostPath: "/host", ContainerPath: "/data", ReadOnly: true},
+		{HostPath: "vol", ContainerPath: "/var", ReadOnly: false},
+	}
+	var seen dockerdrv.RunRequest
+
+	gomock.InOrder(
+		h.store.EXPECT().Load(gomock.Any(), "foo").Return(prev, nil),
+		h.driver.EXPECT().Inspect(gomock.Any(), "decloud-foo").
+			Return(dockerdrv.InspectResult{State: "absent"}, nil),
+		h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, req dockerdrv.RunRequest) (string, error) {
+				seen = req
+				return "cid", nil
+			}),
+	)
+
+	require.NoError(t, h.lc.Start(context.Background(), "foo"))
+	require.Len(t, seen.Volumes, 2)
+	assert.Equal(t, dockerdrv.VolumeMount{Source: "/host", Target: "/data", ReadOnly: true, IsNamed: false}, seen.Volumes[0])
+	assert.Equal(t, dockerdrv.VolumeMount{Source: "vol", Target: "/var", ReadOnly: false, IsNamed: true}, seen.Volumes[1])
+}
+
 func TestLifecycle_StartFromRunningIsNoOp(t *testing.T) {
 	h := newLifecycleHarness(t)
 	prev := newRegisteredService()

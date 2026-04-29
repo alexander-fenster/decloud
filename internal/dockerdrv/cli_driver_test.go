@@ -402,6 +402,28 @@ func TestCLIDriver_RunWithOptionsDualStackPorts(t *testing.T) {
 		[]string{"0.0.0.0:1234:5678/tcp", "[::]:1234:5678/tcp"})
 }
 
+// docker run -d --name decloud-foo --network decloud --restart unless-stopped \
+//
+//	--label decloud.service=foo -v /host:/dst:ro -v vol:/dst decloud-foo:abc123
+func TestCLIDriver_RunPassesVolumeFlags(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.Run(context.Background(), RunRequest{
+		Name:    "decloud-foo",
+		Image:   "decloud-foo:abc123",
+		Network: "decloud",
+		Restart: "unless-stopped",
+		Volumes: []VolumeMount{
+			{Source: "/host", Target: "/dst", ReadOnly: true, IsNamed: false},
+			{Source: "vol", Target: "/dst2", ReadOnly: false, IsNamed: true},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	assert.Equal(t, []string{"/host:/dst:ro", "vol:/dst2"}, volumeFlagsFromArgs(records[0].Args))
+}
+
 func TestCLIDriver_RunWithOptionsBindReadOnly(t *testing.T) {
 	var records []recordedCmd
 	d := driverWith(recordingFactory(&records))

@@ -927,3 +927,114 @@ func TestDeploy_BuildErrorPreservesInnerSentinel(t *testing.T) {
 	assert.True(t, errors.Is(err, sentinel),
 		"inner sentinel must traverse the chain after %%w:%%w fix")
 }
+
+func newRequestWithMounts(mounts []registry.Mount) deploy.Request {
+	r := newRequest()
+	r.Mounts = mounts
+	return r
+}
+
+func expectedVolumes(mounts []registry.Mount) []dockerdrv.VolumeMount {
+	out := make([]dockerdrv.VolumeMount, 0, len(mounts))
+	for _, m := range mounts {
+		out = append(out, dockerdrv.VolumeMount{
+			Source:   m.HostPath,
+			Target:   m.ContainerPath,
+			ReadOnly: m.ReadOnly,
+			IsNamed:  m.IsNamed(),
+		})
+	}
+	return out
+}
+
+func TestDeploy_DeployWithMountsPassesVolumesToDriver(t *testing.T) {
+	h := newDeployerHarness(t)
+	mounts := []registry.Mount{
+		{HostPath: "/host", ContainerPath: "/data", ReadOnly: true},
+		{HostPath: "vol", ContainerPath: "/var", ReadOnly: false},
+	}
+	var seenVolumes []dockerdrv.VolumeMount
+
+	h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
+	h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "foo").Return(nil, registry.ErrNotFound)
+	h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil)
+	h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req dockerdrv.RunRequest) (string, error) {
+			seenVolumes = req.Volumes
+			return "cid", nil
+		})
+	h.driver.EXPECT().ContainerIP(gomock.Any(), gomock.Any()).Return("172.18.0.5", nil)
+	h.store.EXPECT().Save(gomock.Any(), gomock.Any()).Return(nil)
+	h.store.EXPECT().List(gomock.Any()).Return(nil, nil)
+	h.generator.EXPECT().Generate(gomock.Any(), gomock.Any()).DoAndReturn(stubGenerate)
+	h.reloader.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil)
+	h.reloader.EXPECT().Reload(gomock.Any(), gomock.Any()).Return(nil)
+
+	require.NoError(t, h.deployer.Deploy(context.Background(), newRequestWithMounts(mounts)))
+	assert.Equal(t, expectedVolumes(mounts), seenVolumes,
+		"deploy must thread req.Mounts → driver.Run.Volumes with IsNamed derived from HostPath")
+	require.Len(t, seenVolumes, 2)
+	assert.False(t, seenVolumes[0].IsNamed, "/host must classify as bind, not named")
+	assert.True(t, seenVolumes[1].IsNamed, "vol must classify as named volume")
+}
+
+func TestDeploy_DeployWithMountsSavesMountsToRegistry(t *testing.T) {
+	h := newDeployerHarness(t)
+	mounts := []registry.Mount{
+		{HostPath: "/host", ContainerPath: "/data", ReadOnly: true},
+		{HostPath: "vol", ContainerPath: "/var", ReadOnly: false},
+	}
+	var savedMounts []registry.Mount
+
+	h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
+	h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "foo").Return(nil, registry.ErrNotFound)
+	h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil)
+	h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).Return("cid", nil)
+	h.driver.EXPECT().ContainerIP(gomock.Any(), gomock.Any()).Return("172.18.0.5", nil)
+	h.store.EXPECT().Save(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, svc *registry.Service) error {
+			savedMounts = svc.Config.Run.Mounts
+			return nil
+		})
+	h.store.EXPECT().List(gomock.Any()).Return(nil, nil)
+	h.generator.EXPECT().Generate(gomock.Any(), gomock.Any()).DoAndReturn(stubGenerate)
+	h.reloader.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil)
+	h.reloader.EXPECT().Reload(gomock.Any(), gomock.Any()).Return(nil)
+
+	require.NoError(t, h.deployer.Deploy(context.Background(), newRequestWithMounts(mounts)))
+	assert.Equal(t, mounts, savedMounts,
+		"registry.Save must persist req.Mounts so subsequent Load round-trips them")
+}
+
+func TestDeploy_RestoreOldContainerPassesVolumesToDriver(t *testing.T) {
+	h := newDeployerHarness(t)
+	prev := newPrev()
+	prev.Config.Run.Mounts = []registry.Mount{
+		{HostPath: "/old-host", ContainerPath: "/data", ReadOnly: false},
+		{HostPath: "oldvol", ContainerPath: "/var/lib", ReadOnly: true},
+	}
+	var rollbackVolumes []dockerdrv.VolumeMount
+
+	h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
+	h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "foo").Return(prev, nil)
+	h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img", nil)
+	h.driver.EXPECT().Stop(gomock.Any(), "decloud-foo", gomock.Any()).Return(nil)
+	h.driver.EXPECT().Remove(gomock.Any(), "decloud-foo").Return(nil)
+	gomock.InOrder(
+		h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).Return("", errors.New("docker run failed")),
+		h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, req dockerdrv.RunRequest) (string, error) {
+				rollbackVolumes = req.Volumes
+				return "rb-cid", nil
+			}),
+	)
+
+	err := h.deployer.Deploy(context.Background(), newRequest())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, deploy.ErrRun))
+	assert.Equal(t, expectedVolumes(prev.Config.Run.Mounts), rollbackVolumes,
+		"rollback must re-apply prev.Config.Run.Mounts so the recreate strategy preserves volumes")
+}

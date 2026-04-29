@@ -78,29 +78,88 @@ func TestDeployService_MissingNameReturnsExitUsageError(t *testing.T) {
 	assert.Equal(t, ExitUsageError, ExitCodeFor(err))
 }
 
-func TestDeployService_MountFlagReturnsErrMountsNotSupported(t *testing.T) {
-	installMockDeployer(t)
+func TestDeployService_MountFlagAcceptsValidMounts(t *testing.T) {
+	mock := installMockDeployer(t)
+	var got deploy.Request
+	mock.EXPECT().Deploy(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req deploy.Request) error {
+			got = req
+			return nil
+		})
+
 	_, _, err := runRoot(t,
 		"deploy", "service",
 		"--name", "foo",
-		"--mount", "/host:/container",
+		"--port", "8080",
+		"--mount", "/h1:/c1",
+		"--mount", "/h2:/c2:ro",
+		"--mount", "vol1:/c3:ro",
 		"/srv/foo",
 	)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, registry.ErrMountsNotSupported))
-	assert.Equal(t, ExitConfigError, ExitCodeFor(err))
-	assert.Contains(t, err.Error(), "--mount is not supported until M2",
-		"runtime rejection must name the milestone where mounts ship; "+
-			"keep in lockstep with _docs/usage.md and _ai/decisions/m1-scope.md")
+	require.NoError(t, err)
+	require.Len(t, got.Mounts, 3)
+	assert.Equal(t, registry.Mount{HostPath: "/h1", ContainerPath: "/c1", ReadOnly: false}, got.Mounts[0])
+	assert.Equal(t, registry.Mount{HostPath: "/h2", ContainerPath: "/c2", ReadOnly: true}, got.Mounts[1])
+	assert.Equal(t, registry.Mount{HostPath: "vol1", ContainerPath: "/c3", ReadOnly: true}, got.Mounts[2])
+	assert.True(t, got.Mounts[2].IsNamed(), "vol1 must be classified as a named volume")
 }
 
-func TestDeployService_MountFlagHelpReferencesM2(t *testing.T) {
-	cmd := newDeployServiceCmd(&rootContext{})
-	flag := cmd.Flags().Lookup("mount")
-	require.NotNil(t, flag)
-	assert.Contains(t, flag.Usage, "M2 only",
-		"flag help must name the milestone where mounts ship; "+
-			"keep in lockstep with the runtime rejection error and _docs/usage.md")
+func TestDeployService_MountFlagInvalidReturnsExitUsageError(t *testing.T) {
+	cases := []struct {
+		name     string
+		mountArg []string
+	}{
+		{"single_component", []string{"--mount", "/foo"}},
+		{"unknown_mode", []string{"--mount", "/h:/c:zz"}},
+		{"empty_target", []string{"--mount", "/h:"}},
+		{"relative_target", []string{"--mount", "/h:relative"}},
+		{"duplicate_target", []string{"--mount", "/a:/x", "--mount", "/b:/x"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			installMockDeployer(t)
+			args := append([]string{
+				"deploy", "service",
+				"--name", "foo",
+				"--port", "8080",
+			}, tc.mountArg...)
+			args = append(args, "/srv/foo")
+
+			_, _, err := runRoot(t, args...)
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, errUsage),
+				"CLI parse failure must wrap errUsage so exit code is 2; got %v", err)
+			assert.Equal(t, ExitUsageError, ExitCodeFor(err))
+			assert.Contains(t, err.Error(), "--mount",
+				"error must name the offending flag for operator-debug context")
+			if tc.name == "duplicate_target" {
+				assert.False(t, errors.Is(err, registry.ErrInvalidMount),
+					"CLI dup-target must NOT chain ErrInvalidMount; see addendum Issue 1")
+			}
+		})
+	}
+}
+
+func TestDeployService_MountFlagPathWithCommaWorks(t *testing.T) {
+	mock := installMockDeployer(t)
+	var got deploy.Request
+	mock.EXPECT().Deploy(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req deploy.Request) error {
+			got = req
+			return nil
+		})
+
+	_, _, err := runRoot(t,
+		"deploy", "service",
+		"--name", "foo",
+		"--port", "8080",
+		"--mount", "/path/with,comma:/data",
+		"/srv/foo",
+	)
+	require.NoError(t, err)
+	require.Len(t, got.Mounts, 1)
+	assert.Equal(t, "/path/with,comma", got.Mounts[0].HostPath,
+		"comma in host path must NOT split the flag value (StringArrayVar, not StringSliceVar)")
 }
 
 func TestDeployService_StrategyBlueGreenReturnsErrInvalidStrategy(t *testing.T) {

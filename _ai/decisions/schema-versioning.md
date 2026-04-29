@@ -13,7 +13,7 @@
 
 ## What "reserve fields" looks like in practice
 
-M1 declares the full schema shape — including fields M1 won't populate (`Mounts` always empty in M1). M1's loader rejects non-empty `Mounts` with the same `ErrMountsNotSupported` as the CLI's `--mount` flag (closes the hand-edit loophole). M2 starts populating `Mounts`; no file rewrite, no migration code. An M1-era TOML loads cleanly in an M2 binary because the shape is identical, only the values differ. M7 extends populating to secret-file declarations on the same shape.
+M1 declared the full schema shape — including fields M1 wouldn't populate (`Mounts` always empty in M1). M1's loader rejected non-empty `Mounts` with `ErrMountsNotSupported` (deleted at M2). At M2 the rejection becomes positive validation: the loader runs `registry.ValidateMounts` to enforce the same data-integrity rules as the CLI parser (grammar-only checks per `internal/registry/mount.go`; no source stat). M2 populates `Mounts`; no file rewrite, no migration code. An M1-era TOML with empty `Mounts` loads cleanly in an M2 binary because the shape is identical, only the values differ. M7 extends populating to secret-file declarations on the same shape.
 
 ## Escalation rule
 

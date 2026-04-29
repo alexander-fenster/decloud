@@ -65,13 +65,12 @@ func (s *fsStore) Load(ctx context.Context, name string) (*Service, error) {
 		return nil, fmt.Errorf("%w: config %s has schema_version=%d, expected %d",
 			ErrSchemaMismatch, cfgPath, cfg.SchemaVersion, CurrentSchemaVersion)
 	}
-	if len(cfg.Run.Mounts) > 0 {
-		return nil, fmt.Errorf("%w: service %q declares %d mount(s) in %s; mounts are not supported until M2",
-			ErrMountsNotSupported, cfg.Name, len(cfg.Run.Mounts), cfgPath)
+	if err := ValidateMounts(cfg.Run.Mounts, name, cfgPath); err != nil {
+		return nil, err
 	}
 	if cfg.Strategy != "" && cfg.Strategy != "recreate" {
 		return nil, fmt.Errorf("%w: service %q declares strategy=%q in %s; only \"recreate\" is supported in M1",
-			ErrInvalidStrategy, cfg.Name, cfg.Strategy, cfgPath)
+			ErrInvalidStrategy, name, cfg.Strategy, cfgPath)
 	}
 	cfg.Name = name
 

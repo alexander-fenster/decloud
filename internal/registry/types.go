@@ -57,6 +57,10 @@ type RunSpec struct {
 }
 
 type Mount struct {
+	// HostPath is the mount source. For bind mounts it is an absolute host
+	// path starting with "/"; for named volumes it is the volume name. The
+	// TOML key is historically named host_path. Use Mount.IsNamed() to
+	// distinguish at runtime.
 	HostPath      string `toml:"host_path"`
 	ContainerPath string `toml:"container_path"`
 	ReadOnly      bool   `toml:"read_only"`

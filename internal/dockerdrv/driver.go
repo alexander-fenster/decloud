@@ -35,6 +35,7 @@ type RunRequest struct {
 	Env     map[string]string
 	Restart string
 	Port    int
+	Volumes []VolumeMount // emitted in declared order, one -v per entry
 }
 
 type InspectResult struct {
