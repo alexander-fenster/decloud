@@ -1,6 +1,6 @@
 # Two-file split: config (0644) + secrets (0600)
 
-The README's "Handling secrets" section requires structural separation of secrets from operational config on disk — not just logical separation inside one file. Each registered service is therefore TWO files:
+The pre-rewrite README's "Handling secrets" section (the design-narrative draft that drove M1 scoping) required structural separation of secrets from operational config on disk — not just logical separation inside one file. The requirement is now load-bearing in the M1 type system regardless of where it was originally documented. Each registered service is therefore TWO files:
 
 - `/opt/decloud/config/services/<name>.toml` — root:root, mode **0644**, world-readable. Holds non-secret operational metadata: `schema_version`, `name`, `source`, `build`, `run` (incl. `mounts` paths), `routes`, `strategy`, `readiness`, `state`. Safe to inspect; future "git-mirror the non-secret config" idea stays cheap.
 - `/opt/decloud/secrets/<name>/env.toml` — root:root, mode **0600**, in a directory at mode **0700**. Holds `schema_version` (must match config) + `env` map (the `env.sh` capture). M7 will add `secrets/<name>/files/` for secret file contents (originally planned for M3, deferred per maintainer priority — see `_tasks/2026-04-28-milestone-resequence/`).

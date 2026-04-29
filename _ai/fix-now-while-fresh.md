@@ -53,6 +53,16 @@ Lesson: when the rename target has *meaning* (a milestone, a version, a feature 
 
 The same fix-while-fresh decision rule still applies to the survivor — Raymond's line-52 fix met all four conditions (mechanical, same file, <5 minutes, on-theme) and was a direct parallel to Joel's own pre-existing-bug fix at `install.md:121`. The rule has now load-tested across two distinct surfacing patterns: Joel's pre-existing bug surfaced by being on-theme, and Raymond's same-architectural-event survivor of an enumerated grep-audit.
 
+## Refinement: debris created by the current task is on-theme by definition
+
+A subtle extension of condition #4 (the task's stated theme covers it): when a doc rewrite, rename, or refactor invalidates references in *other* files, those references are debris created BY this task. Fixing them in scope is hygiene, not creep — even if the touched files (`_ai/decisions/`, `_docs/`, etc.) are off the original-deliverable list.
+
+Live example from `_tasks/2026-04-29-readme-and-license/`: Rob's README rewrite shrank the file from 278 to 154 lines. Three `_ai/decisions/` files (`no-magic-zero-modes.md`, `secrets-split.md`, `m1-scope.md`) made present-tense citations to README content the rewrite removed, including a bare `README.md:215` line-number cite that no longer resolves at all. Raymond extended the same in-scope-fix discipline to those files in the same task. Linus's framing in `007-linus-execution-review.md` §4: *"the sweep cleaned up debris created by Rob's commit. ... This is the same logic that justified bundling the `_docs/install.md` §8 fix into Rob's commit. If we cared so much about scope-policing that we couldn't fix the doc debris we created, we'd be doing a worse job."*
+
+The decision rule still applies — the sweep was bounded to citation-tense fixes plus M2-shipped accuracy fixes, all mechanical, all in `_ai/decisions/` files that were already stale before the rewrite or freshly stale because of it. None of the decision rationales were touched.
+
+Lesson: when grading a candidate fix against the four conditions, ask "did *this task's* changes cause this staleness?" If yes, condition #4 (on-theme) is automatically satisfied — your task is responsible for the debris field around itself.
+
 ## Originator
 
 Pattern observed across:
@@ -60,3 +70,4 @@ Pattern observed across:
 - `_tasks/2026-04-28-deploy-cleanup-on-interrupt/013-don-plan-iteration2.md` (v2.2, six-item lockdown — applying the rule to Don's own consistency).
 - `_tasks/2026-04-28-deploy-cleanup-on-interrupt/021-don-final-signoff.md` (final verdict — cumulative diff coherent, not patchwork).
 - `_tasks/2026-04-28-milestone-resequence/{009-raymond-docs.md, 011-linus-impl-review.md §6, 012-don-closeout.md §3, 013-joel-closeout.md §3}` (audit-by-read refinement).
+- `_tasks/2026-04-29-readme-and-license/{006-raymond-docs.md, 007-linus-execution-review.md §4}` (debris-from-current-task refinement).

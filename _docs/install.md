@@ -211,7 +211,7 @@ Exit 60 with text `service is registered and running but Caddy is not routing tr
 
 ## 8. License
 
-This repository does not yet declare a license. If you intend to redistribute the binary or use it in a context that requires explicit license grant, ask the maintainer before doing so.
+Decloud is licensed under the MIT License. See the top-level [`LICENSE`](../LICENSE) file for the full text.
 
 ## 9. Next steps
 

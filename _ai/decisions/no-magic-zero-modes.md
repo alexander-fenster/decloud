@@ -22,4 +22,4 @@ Locked in by `TestDeployService_NoPortReturnsExitUsageError` and `TestDeployServ
 
 ## Originator
 
-`_tasks/2026-04-26-fix-deploy-service-review-findings/02-plan.md` §"Finding 3", `04-linus-review.md` §"Finding 3 — Reject port=0: CORRECT POLICY, NOT A CORNER" (cross-referenced README.md:215 and `_ai/decisions/m1-scope.md:32`).
+`_tasks/2026-04-26-fix-deploy-service-review-findings/02-plan.md` §"Finding 3", `04-linus-review.md` §"Finding 3 — Reject port=0: CORRECT POLICY, NOT A CORNER" (cross-referenced the pre-rewrite README's CLI-surface section and `_ai/decisions/m1-scope.md:32`; the user-facing `--port`-required contract now lives in `_docs/usage.md` §2).

@@ -1,250 +1,113 @@
 # Decloud
 
-Decloud is an in-house deployment tool for low-traffic services that do not need a full cloud runtime. The target is one virtual server running Docker containers, with Caddy handling routing and TLS certificates automatically.
+Decloud is a small, single-host platform-as-a-service for low-traffic services that don't need a full cloud runtime.
 
-The project starts as a replacement for a few existing Google Cloud and systemd workflows:
+It replaces a few specific workflows: Cloud Run services deployed via `gcloud run deploy --source .`, long-running services running as host `systemd` units, and Cron jobs scheduled with Google Cloud Scheduler. The expected operator is one person with SSH access to one Linux host.
 
-1. Cloud Run services deployed with `gcloud run deploy --source .`
-2. Long-running services currently deployed as host `systemd` units
-3. Cron jobs currently scheduled with Google Cloud Scheduler
+## Project status
 
-The goal is not to rebuild Cloud Run, Kubernetes, or a management API. SSH access to the server is enough. The expected interface is a small set of CLI tools for deploying, unregistering, starting, stopping, and inspecting services.
+Decloud is mid-build. As of April 2026, only the milestones marked SHIPPED below are usable. See the [Roadmap](#roadmap) for what's next.
 
-Tools like Dokku, CapRover, and Coolify occupy roughly this space. Decloud is a deliberately narrower, bespoke solution rather than an adoption of one of those: the workload set is small and known, the operator is one person, and agentic coding makes a tailored implementation cheaper to write and easier to operate than configuring a general-purpose platform designed for a much broader audience.
+**What ships today (M1 + M2):**
 
-## Operating Model
+- **M1** — server-side `decloud deploy service` with the `recreate` strategy; lifecycle commands `start`, `stop`, `restart`, `status`, `logs`, `unregister`; `decloud-caddy` ingress on a Docker network; ports `80/tcp`, `443/tcp`, and `443/udp` on the host.
+- **M2** — persistent volumes via `--mount` (bind paths and Docker named volumes; `:ro` mode flag).
 
-One host runs the platform components:
+**Not yet shipped:**
 
-- Docker runs all application workloads.
-- Caddy terminates TLS, obtains and renews certificates, and routes public hostnames to containers.
-- A single host `systemd` unit starts and supervises the Decloud control layer on boot.
-- Systemd timers trigger scheduled jobs, which Decloud runs as short-lived Docker containers. Application code is never installed on the host.
+- **M3** — host bootstrap script (install Decloud manually for now; see [`_docs/install.md`](_docs/install.md)).
+- **M4** — zero-downtime blue/green deploys.
+- **M5** — scheduled jobs (`decloud deploy job`).
+- **M6** — encrypted backups via `restic`; image GC.
+- **M7** — client binary for laptop-side `decloud`; deploy-time secret files.
 
-The platform should keep host-level configuration small and predictable. Long-running application supervision lives in Docker and Decloud metadata, not in many separate host `systemd` service units. Per-job timer + oneshot units are fine — they wire the scheduler, not supervise application processes.
+## Quick start
 
-Developer laptops install a slim `decloud` client package whose only job is to package and upload source trees to the server; it holds no other platform state. See [CLI Shape](#cli-shape) for the split.
+On a fresh Linux host with Docker and a Go toolchain installed:
 
-## Workload Types
+```sh
+# 1. Create the Decloud state tree (full chmod sequence in _docs/install.md §4).
+sudo mkdir -p /opt/decloud/{config/{services,jobs,caddy},secrets,state/deploys,logs}
+sudo chmod 0700 /opt/decloud/secrets
 
-Decloud has two workload types: **services** (long-running containers) and **jobs** (containers that run on a schedule and exit).
+# 2. Install the binary.
+go install github.com/alexander-fenster/decloud/cmd/decloud@latest
+sudo install -m 0755 "$(go env GOPATH)/bin/decloud" /usr/local/bin/decloud
 
-The cloud split between Cloud Run (ephemeral, request-driven) and systemd processes on a VM (persistent, can initiate work on their own) collapses here. Both become long-running Docker containers on the same host; the only runtime difference is whether Caddy routes a public hostname to the container. A single service can expose HTTP *and* do background work — for example, an HTTP backend that also sends FCM push notifications on its own schedule is one service, not two.
+# 3. Bring up the Caddy ingress container.
+decloud caddy up
 
-Orthogonal attributes of a service are configured per-deploy:
-
-- Zero or more public hostnames routed through Caddy.
-- Whether it needs persistent storage (explicit mounted volumes).
-- Environment variables, secret files, and restart behavior.
-
-### Services
-
-Services replace both Cloud Run services and host `systemd` units. They run as long-running Docker containers, start on deploy and host reboot, and keep running until explicitly stopped, replaced, or unregistered.
-
-Expected behavior:
-
-- Build an application container from source using a Dockerfile.
-- Run one container per deployed service by default.
-- Route zero or more public hostnames through Caddy to the container.
-- Keep the container filesystem ephemeral by default.
-- Mount explicit volumes for any required local persistence.
-- Pass environment variables and secret files at deploy time.
-- Restart on crash, through the same host-level Decloud supervisor rather than per-service host `systemd` units.
-
-Unlike Cloud Run, Decloud does not stop containers on inactivity or scale them horizontally. Cloud Run-compatible assumptions should be supported where practical, especially for applications that expect credentials through environment variables or files.
-
-### Jobs
-
-Jobs replace Google Cloud Scheduler jobs. They run on a schedule, execute in a Docker container, and exit.
-
-The scheduler is systemd timers and the execution environment is Docker. Per job, Decloud writes a timer unit and a oneshot service unit; the service unit invokes Decloud to launch the job's container. Application code is never installed on the host — jobs are always containers, never raw commands on the host.
-
-Systemd timers are preferred over cron because the platform already depends on systemd for its control unit, and `journalctl -u <job>` plus `systemctl list-timers` give usable operational visibility without a separate log pipeline.
-
-Expected behavior:
-
-- Register a schedule and command/image for each job.
-- Run jobs in Docker containers.
-- Pass environment variables, secret files, and mounts.
-- Record enough metadata to inspect what is registered.
-- Support unregistering and updating jobs cleanly.
-
-## Configuration
-
-Deployments need a durable configuration directory on the host. It should describe services, routes, secrets, mounts, and cron jobs in plain files so the system is understandable over SSH.
-
-Likely host layout:
-
-```text
-/opt/decloud/
-  config/
-    services/
-    jobs/
-    caddy/
-  secrets/
-  state/
-  logs/
+# 4. Deploy a service. ./myservice/ contains a Dockerfile and (optionally) env.sh.
+decloud deploy service \
+  --name myservice \
+  --host myservice.example.com \
+  --port 8080 \
+  ./myservice
 ```
 
-This layout is provisional. All persistent Decloud state lives under this one directory so that a single backup path covers everything that matters — see [Backup and Restore](#backup-and-restore).
+DNS for `myservice.example.com` must already point at the host so Caddy can complete the ACME challenge.
 
-## Environment and Mounted Files
+For the full procedure (firewall, ACME rate limits, migrating from earlier installs), see [`_docs/install.md`](_docs/install.md). For the deploy flag reference, see [`_docs/usage.md`](_docs/usage.md).
 
-A service declares two things at deploy time: the environment variables the container sees, and any files to mount into the container.
+## What you get today
 
-### Environment variables
+- `decloud deploy service` — build a Docker image from a source dir, run it on the shared `decloud` network, route Caddy to it, persist the registration.
+- `decloud start | stop | restart <name>` — lifecycle controls. `start` re-runs the container from the saved image+env; `restart` is stop-then-start; neither rebuilds.
+- `decloud status <name>` — runtime + registry state on one line.
+- `decloud logs <name> [-f] [--tail N]` — pass-through to `docker logs`.
+- `decloud unregister <name>` — remove the container, both registry files, and the Caddy route.
+- `decloud caddy up | down | reload` — bring the `decloud-caddy` container up on the shared `decloud` network, take it down, or regenerate the Caddyfile from the registry and reload.
+- `--mount` for `deploy service` — bind paths (`/host:/container[:ro]`) or named volumes (`name:/container[:ro]`).
+- `env.sh` capture — sourced inside a hermetic bash, exported variables become container environment, never baked into the image.
+- Strategy is `recreate` — brief downtime as the old container is stopped before the new one starts. Blue/green is M4.
 
-An `env.sh` shell script is sourced at deploy time; every variable it exports becomes an environment variable on the container. Arbitrary shell is allowed — computed values, conditional exports, subshell invocations — because Decloud only cares about the resulting environment after the script runs. This lifts the Cloud Run constraint of reducing everything to `KEY=VALUE` literals, which in the existing workflow required parsing `env.sh` back out into a flat list before handing it to `gcloud`.
+## Architecture in 60 seconds
 
-The captured environment is persisted with the service registration and injected into the container at `docker run` time — never baked into the image, so secrets stay out of image layers. This mirrors Cloud Run's model, where env lives on the revision rather than inside the container. `env.sh` is re-evaluated only on redeploy, so restarts are fast and reproducible and the script does not need to be idempotent.
+One Linux host. Docker runs every workload, including Caddy itself — `decloud-caddy` is just another container on the shared `decloud` Docker network. Caddy reaches each service container by its Docker DNS name (`decloud-<service>`); service containers are not host-port-published.
 
-### Mounted files
+All persistent state lives under `/opt/decloud/`: per-service config TOML at `config/services/<name>.toml`, secrets at `secrets/<name>/env.toml`, the generated Caddyfile at `config/caddy/Caddyfile`. One backup path covers everything that matters.
 
-Some content does not fit cleanly into environment variables — Google service account JSON is the common case. These are declared as file mounts: a host path is mounted read-only into the container at a given in-container path. The Google Cloud client libraries then read credentials through `GOOGLE_APPLICATION_CREDENTIALS`, which `env.sh` sets.
+There is no Decloud daemon and no listening management port. SSH is the management transport: the operator SSHes in and runs `decloud` directly. A laptop-side client binary is on the roadmap (M7); for now the SSH-and-run-directly path is the supported flow.
 
-Producing a mount file inline is a pure shell concern. A deploy script that wants to generate a file on the fly uses a standard heredoc to write it, then declares the mount. Decloud needs no special heredoc support — the shell already does it.
+## Install
 
-### Handling secrets
+Decloud is installed manually in M1+M2 — no bootstrap script yet. Target OS: Linux with Docker and systemd; tested on Ubuntu LTS and Debian.
 
-Sensitive inputs — whether they reach the container as environment variables or as mounted files — are never baked into Docker images. `env.sh` and any deploy-provided secret files are stored on the host under `/opt/decloud/secrets/<service>/` with owner-read-only permissions, injected or mounted at container start, and included in the encrypted `restic` backup. The backup encryption key is what ultimately protects them.
+Prerequisites: a Linux host with root or sudo, outbound HTTPS, the public ports `80/tcp`, `443/tcp`, and `443/udp` open on the host firewall, and DNS for any hostnames you plan to deploy already pointing at the host (so Caddy can complete the ACME challenge). A Go toolchain on the host is convenient but not required — you can build the binary elsewhere and `scp` it in.
 
-## Routing and TLS
+Full procedure with the chmod sequence, ACME-rate-limit caveats, and migration notes for older installs: [`_docs/install.md`](_docs/install.md).
 
-Caddy is responsible for public routing and certificate management. It joins the same Docker network as service containers so that upstreams can be addressed by container name over Docker DNS rather than through host-published ports.
+## Usage
 
-A service registration with a public route should include enough information to route traffic:
+Three illustrative commands. The full flag reference and exit-code table live in [`_docs/usage.md`](_docs/usage.md).
 
-- Public hostname
-- Container name or Docker network target
-- Internal port
-- Optional path-based routing if needed later
+```sh
+# Deploy a service.
+decloud deploy service --name myservice --host myservice.example.com --port 8080 ./myservice
 
-Decloud maintains a Caddyfile on disk as the persisted source of truth, generated from registered service metadata, regenerated on registration changes, and reloaded with `caddy reload`. During the hot path of a zero-downtime deploy, upstream swaps should go through Caddy's admin API (PATCH the specific route) rather than a full reload, so the flip is atomic and does not re-parse unrelated config.
+# Deploy with a persistent bind mount (volumes survive container recreation).
+decloud deploy service --name myservice --host myservice.example.com --port 8080 \
+  --mount /var/lib/myservice:/data ./myservice
 
-DNS remains a manual responsibility. Once DNS points at the server, Caddy should obtain and renew certificates automatically.
-
-## Container Lifecycle
-
-Containers should be treated as replaceable runtime artifacts.
-
-Default assumptions:
-
-- Containers start on deploy and host reboot.
-- Containers keep running until stopped, replaced, or unregistered.
-- Application files inside the container are ephemeral.
-- Persistent application state must use mounted volumes or external services.
-- Logs should be available through Docker logs at minimum.
-
-The exact `docker run` flags are an implementation detail, but deployed containers should avoid depending on mutable state inside the container filesystem.
-
-## Deploy Lifecycle
-
-Service deploys are zero-downtime by default. The sequence:
-
-1. Build the new image.
-2. Start the new container on the shared Docker network that Caddy joins. It listens on its internal port; Docker's container DNS makes it addressable by name.
-3. Wait for readiness. Each service declares one readiness signal in its registration — either the image's own `HEALTHCHECK` or an HTTP probe path (e.g., `GET /healthz` returning 200).
-4. Flip Caddy's upstream for the service's hostname(s) from the old container to the new one via the admin API.
-5. Send SIGTERM to the old container, wait a grace period (default ~10s) for in-flight requests to finish, then SIGKILL and remove.
-
-Concurrent deploys of the same service could race through this sequence and leave orphan containers. v1 assumes a single operator who does not run concurrent deploys; a per-service deploy lock is a simple later addition if it ever becomes a real concern.
-
-### Rollback
-
-- If readiness fails at step 3, kill the new container and leave the old one serving. Nothing has flipped.
-- If the new container crashes after the flip, the restart policy brings it back. An optional later addition: a crash-budget check that auto-reverts to the previous image on rapid post-swap failures.
-
-### When blue/green is not safe
-
-Some services cannot safely run two copies at once:
-
-- **Exclusive local volumes** — SQLite, BoltDB, or anything with file locks can corrupt state if two processes touch the same mount.
-- **Other exclusive resources** — a service that holds an OS-level lock or binds to a unique external port.
-
-These services should register with `strategy: recreate` (stop-then-start), accepting short downtime. The default is blue/green.
-
-### Scope
-
-Decloud delivers mechanical zero-downtime — no dropped requests during the swap itself. Semantic zero-downtime across a database schema migration or other backward-incompatible change remains the application's responsibility.
-
-## Image Housekeeping
-
-Server-side builds accumulate image layers and BuildKit cache over time. A weekly systemd timer runs:
-
-- `docker system prune -a --filter until=168h` to remove stopped containers, dangling images, and unused images older than a week.
-- `docker builder prune --filter until=168h` to trim the BuildKit layer cache.
-
-Images in use by running containers are never pruned regardless of age. The one-week age filter also preserves the immediately-previous image per service long enough for a quick manual rollback and sidesteps any edge case where a deploy is mid-flight when the timer fires. Volumes are never pruned — they are managed explicitly through service registrations.
-
-A timer is preferred over pruning after each deploy so that GC failures cannot affect deploy success and so the prune never has to reason about deploy state. `decloud gc` runs the same prune on demand.
-
-## Backup and Restore
-
-v1 workloads are stateless or file-backed with no live database writers, so the backup strategy is simple: push everything to encrypted object storage on a timer.
-
-What gets backed up:
-
-- `/opt/decloud/` in full — config, state, secrets, logs, last-deployed source bundles.
-- All declared service volume mounts, discovered from service registrations.
-- Caddy's data directory (ACME state), so a restore does not re-hit Let's Encrypt rate limits.
-
-Docker images are not backed up. They rebuild from the source bundles on a fresh host.
-
-The mechanism is `restic` pushing an encrypted, deduplicating snapshot to an S3-compatible bucket (Backblaze B2, Cloudflare R2, AWS S3 — any works). A nightly systemd timer runs it. The repo password lives outside the host (password manager or equivalent); losing it means losing the backups.
-
-The target bucket should have object-versioning enabled so a compromised host cannot destroy older snapshots by overwriting the repo. Whatever whole-disk snapshot feature the VM provider offers is a cheap safety net on top.
-
-Out of scope for v1 and easy to add later when a workload actually needs them:
-
-- Per-service `pre_backup` hooks that produce a consistent dump before the snapshot (only matters once a live-database workload lands).
-- Git-backed mirroring of the non-secret config, independent of the backup path above.
-
-## CLI Shape
-
-The project is called Decloud — the action of getting rid of cloud runtime. The CLI binary is `decloud`, shipped as two separate packages because the client and the server-side run in very different environments and have very different responsibilities:
-
-- **Client**, installed on developer laptops from the standard language-ecosystem registry — e.g. `npm install -g decloud-client` or `go install github.com/alexander-fenster/decloud/client@latest`. Narrow surface: package a source tree, push it to the server, stream the remote output back, exit with the remote exit code. That is essentially its whole job. Heterogeneous install base (macOS / Linux / occasionally Windows).
-- **Server-side**, installed on the single host that runs containers. Full CLI for deploying, inspecting, managing, backing up, and garbage-collecting services. Installed once during host bootstrap; one Linux target.
-
-The transport between them is SSH. There is no daemon, no HTTP management API, and no listening port — the client invokes the server-side `decloud` over SSH and proxies its I/O. This keeps "SSH access is enough" intact as the operator contract, and the server-side CLI is equally usable by a human who SSH'd in directly.
-
-Client commands (run on a laptop):
-
-```text
-decloud deploy service [--host example.com ...]
-decloud deploy job
+# Inspect a deployed service.
+decloud status myservice
 ```
 
-Server-side commands (run on the host, either directly over SSH or under the hood from the client's `deploy`):
+See [`_docs/usage.md`](_docs/usage.md) §3 for exit codes and §4 for the lifecycle command reference.
 
-```text
-decloud unregister <name>
-decloud start <name>
-decloud stop <name>
-decloud restart <name>
-decloud status [<name>]
-decloud logs <name>
-decloud caddy reload
-decloud backup run
-decloud backup list
-decloud backup restore <snapshot> [--service <name>]
-decloud gc
-```
+## Roadmap
 
-### Deploy flow
+- **M1** — Server-side service deploy with `recreate` strategy. (SHIPPED)
+- **M2** — Persistent volumes via `--mount`. (SHIPPED)
+- **M3** — Host bootstrap script and config-file plumbing (Viper). (PLANNED)
+- **M4** — Zero-downtime blue/green deploys via Caddy admin API. (PLANNED)
+- **M5** — Scheduled jobs via systemd timers (`decloud deploy job`). (PLANNED)
+- **M6** — Encrypted backups via `restic`; image GC (`decloud gc`). (PLANNED)
+- **M7** — Laptop-side client binary; deploy-time secret files; operational polish. (PLANNED)
 
-1. Client packages the source tree containing the Dockerfile, honoring `.dockerignore` or an equivalent ignore file.
-2. Client uploads the package to the server over SSH.
-3. Server builds the Docker image.
-4. Server runs the [deploy lifecycle](#deploy-lifecycle): start new container, wait for readiness, flip Caddy, stop old container.
+## Non-goals
 
-This avoids duplicating packaging logic in every project, keeps container builds off the developer laptop, and matches the useful part of `gcloud run deploy --source .` without inheriting Cloud Build or its CLI flag compatibility.
-
-The first implementation should use Docker directly, likely through the Docker CLI. Docker Compose is not part of the intended design.
-
-## Non-Goals
-
-Decloud does not need to provide:
+Decloud will not provide:
 
 - Horizontal autoscaling
 - Scale-to-zero
@@ -253,26 +116,39 @@ Decloud does not need to provide:
 - A public management API
 - Multi-node orchestration
 - Kubernetes compatibility
-- Full Cloud Run feature parity
-- Cloud Run-compatible CLI flags
-- Host-level `systemd` supervision units per long-running application (per-job timer units for scheduled jobs are fine)
+- Full Cloud Run feature parity, or Cloud Run-compatible CLI flags
+- Per-application host `systemd` units (per-job timer units for scheduled jobs are fine)
 
-## Open Design Questions
+## Repository layout
 
-These are intentionally unresolved until implementation options are evaluated:
+```text
+cmd/decloud/        # the decloud binary (single main package)
+internal/           # private Go packages: cli, deploy, registry, caddy, dockerdrv, envcap, ...
+_docs/              # user-facing documentation (install.md, usage.md)
+_ai/                # decisions, conventions, agentic-development notes
+_tasks/             # per-task workflow trail (planning, review, implementation reports)
+CLAUDE.md           # contributor instructions (code style, agentic workflow)
+tools.go            # pinned tool dependencies (gomock)
+```
 
-- How to represent service metadata: YAML, JSON, shell files, or generated unit-like files.
-- Whether logs need a lightweight aggregation story beyond `docker logs` and `journalctl`.
+M1+M2 ship from `cmd/` and `internal/`. The `_ai/` and `_tasks/` directories are the agentic-development trail and not required reading for users.
 
-## Initial Direction
+## Contributing
 
-Start with the smallest useful platform:
+Build and test:
 
-1. A host bootstrap step installs Docker and Caddy and enables one Decloud systemd unit. Systemd timers handle scheduled jobs; no separate cron daemon is required.
-2. A CLI registers services and jobs in plain host-side configuration.
-3. Registering a service with a public hostname updates Caddy and reloads it.
-4. Deployments upload source packages, build Docker images on the server, then replace the running container.
-5. Secrets and persistent data are always explicit mounts.
-6. A nightly systemd timer pushes an encrypted `restic` snapshot of all persistent state to object storage.
+```sh
+go build ./cmd/decloud
+go test ./...
 
-This should cover the current low-traffic workloads while keeping the implementation understandable and operable over SSH.
+# Integration tests (require Docker):
+DECLOUD_INTEGRATION=1 go test -tags integration ./internal/integration/...
+```
+
+Code style: format with `gofmt`. CLI flags use [Cobra](https://github.com/spf13/cobra); tests use [Testify](https://github.com/stretchr/testify) and [gomock](https://github.com/uber-go/mock). The agentic-development workflow is documented in [`CLAUDE.md`](CLAUDE.md).
+
+The dev maintainer's machine has no Docker; integration tests run on a separate Linux host. Treat `DECLOUD_INTEGRATION=1` as opt-in, not the default test flow.
+
+## License
+
+MIT — see [`LICENSE`](./LICENSE).

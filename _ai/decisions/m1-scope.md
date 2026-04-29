@@ -10,11 +10,11 @@
 
 ## Explicit M1 cuts (each one is a tar pit if relaxed)
 
-- **No client binary** — operator SSHes in. README explicitly says server CLI is "equally usable by a human SSH'd in." Client is M7.
-- **No zero-downtime / no blue-green** — `strategy: recreate` only. README says blue-green is the default; M1 explicitly downgrades. Loader rejects `strategy = "blue_green"`. Blue-green via Caddy admin API is M4.
+- **No client binary** — operator SSHes in. The pre-rewrite README explicitly said the server CLI is "equally usable by a human SSH'd in." Client is M7.
+- **No zero-downtime / no blue-green** — `strategy: recreate` only. The pre-rewrite README said blue-green was the default; M1 explicitly downgrades. Loader rejects `strategy = "blue_green"`. Blue-green via Caddy admin API is M4.
 - **No jobs** / **No backups** / **No image GC** / **No bootstrap script** — M5/M6/M6/M3 respectively.
 - **No `--mount` in M1** — flag rejected; loader also rejected non-empty `Mounts` (closed hand-edit loophole). Shipped at M2; see `_tasks/2026-04-28-m2-server-side-mounts/`.
-- **No restart-on-crash supervisor** — Docker `--restart=unless-stopped` does the boring 90%. README's supervisor talk waits for M7.
+- **No restart-on-crash supervisor** — Docker `--restart=unless-stopped` does the boring 90%. The pre-rewrite README's supervisor talk waits for M7.
 - **No Viper** — plain Cobra + `os.Getenv("DECLOUD_ROOT")` is three lines. M3 introduces Viper when there's a real `/etc/decloud/config.toml` to read. M2 introduces no global config or Viper plumbing — that lands at M3. M2's mount config is per-service via `--mount` and the existing `Run.Mounts` field reserved at M1; do not "helpfully" add `/etc/decloud/config.toml` parsing in M2 for default-mount-options or similar (that is the Option C ad-hoc-loading trap rejected in `_tasks/2026-04-28-milestone-resequence/002-don-plan.md` §"Justification").
 
 ## Recreate downtime and step ordering
