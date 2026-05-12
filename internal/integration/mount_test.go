@@ -68,6 +68,7 @@ func TestIntegration_MountBindRoundTrip(t *testing.T) {
 	defer runCancel()
 	_, err := driver.Run(runCtx, dockerdrv.RunRequest{
 		Name:    mountTestContainer,
+		Service: "mounttest",
 		Image:   mountTestImage,
 		Network: "decloud",
 		Restart: "no",

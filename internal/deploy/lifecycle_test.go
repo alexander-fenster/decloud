@@ -252,6 +252,8 @@ func TestLifecycle_StartFromAbsentReRunsContainer(t *testing.T) {
 	assert.Equal(t, prev.Config.Build.ImageRef, seen.Image)
 	assert.Equal(t, "decloud", seen.Network)
 	assert.Equal(t, prev.Secrets.Env, seen.Env)
+	assert.Equal(t, "foo", seen.Service,
+		"absent-state Start must populate RunRequest.Service so the re-run container gets tag=decloud/foo")
 }
 
 func TestLifecycle_StartAbsentBranchPassesVolumesToDriver(t *testing.T) {
@@ -278,6 +280,7 @@ func TestLifecycle_StartAbsentBranchPassesVolumesToDriver(t *testing.T) {
 	require.Len(t, seen.Volumes, 2)
 	assert.Equal(t, dockerdrv.VolumeMount{Source: "/host", Target: "/data", ReadOnly: true, IsNamed: false}, seen.Volumes[0])
 	assert.Equal(t, dockerdrv.VolumeMount{Source: "vol", Target: "/var", ReadOnly: false, IsNamed: true}, seen.Volumes[1])
+	assert.Equal(t, "foo", seen.Service)
 }
 
 func TestLifecycle_StartFromRunningIsNoOp(t *testing.T) {

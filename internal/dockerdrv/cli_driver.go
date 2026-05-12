@@ -44,11 +44,19 @@ func (d *cliDriver) Build(ctx context.Context, req BuildRequest) (string, error)
 }
 
 func (d *cliDriver) Run(ctx context.Context, req RunRequest) (string, error) {
+	if req.Service == "" {
+		return "", ErrEmptyService
+	}
+	if strings.ContainsRune(req.Service, '/') {
+		return "", ErrInvalidService
+	}
 	args := []string{
 		"run", "-d",
 		"--name", req.Name,
 		"--network", req.Network,
 		"--restart", req.Restart,
+		"--log-driver", "journald",
+		"--log-opt", "tag=decloud/" + req.Service,
 	}
 	keys := make([]string, 0, len(req.Env))
 	for k := range req.Env {
@@ -61,7 +69,7 @@ func (d *cliDriver) Run(ctx context.Context, req RunRequest) (string, error) {
 	for _, v := range req.Volumes {
 		args = append(args, "-v", formatVolume(v))
 	}
-	args = append(args, "--label", "decloud.service="+strings.TrimPrefix(req.Name, "decloud-"))
+	args = append(args, "--label", "decloud.service="+req.Service)
 	args = append(args, req.Image)
 
 	var stdout, stderr bytes.Buffer
@@ -210,11 +218,19 @@ func (d *cliDriver) ImagePull(ctx context.Context, ref string) error {
 }
 
 func (d *cliDriver) RunWithOptions(ctx context.Context, opts RunOptions) (string, error) {
+	if opts.Service == "" {
+		return "", ErrEmptyService
+	}
+	if strings.ContainsRune(opts.Service, '/') {
+		return "", ErrInvalidService
+	}
 	args := []string{
 		"run", "-d",
 		"--name", opts.Name,
 		"--network", opts.Network,
 		"--restart", opts.Restart,
+		"--log-driver", "journald",
+		"--log-opt", "tag=decloud/" + opts.Service,
 	}
 	envKeys := make([]string, 0, len(opts.Env))
 	for k := range opts.Env {

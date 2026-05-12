@@ -10,6 +10,7 @@ Tactical reference for the Decloud codebase. Each file is a dense decision recor
 - `decisions/m1-test-strategy.md` — M1 ships unit-tests-only per maintainer directive; Gomock for `Store`/`Capturer`/`Driver`/`Generator`/`Reloader`, real bash for `internal/envcap`, ten-item handoff receipt is the manual-CI bridge until GitHub Actions lands.
 - `decisions/no-magic-zero-modes.md` — `--port=0` rejected at validation, NOT treated as "worker mode"; M5 workers get a separate `deploy job` command. Why folding workload shapes into one command via magic values produces 200-line if-else trees.
 - `decisions/caddy-runs-in-container.md` — Caddy is `decloud-caddy` on the `decloud` Docker network, not a host systemd unit; why every host-side variant (host.docker.internal, --network host, /etc/hosts injection, resolvers 127.0.0.11, dnsmasq, sidecar) was rejected; dual-stack publishing, named-volume ACME state, deploy-failure recovery contract.
+- `decisions/journald-log-driver.md` — every Decloud container (services AND `decloud-caddy`) is started with `--log-driver=journald --log-opt tag=decloud/<service>`; why journald not syslog; why `Service` flows as an explicit field not derived from `Name`; the two driver-layer sentinels (`ErrEmptyService` + `ErrInvalidService`) and the slash-rejection invariant; `docker start` does NOT re-emit log flags. Cross-redeploy log query: `journalctl CONTAINER_TAG=decloud/<service>` (exact-match, not regex).
 
 ## Implementation patterns (reusable)
 
@@ -25,6 +26,8 @@ Tactical reference for the Decloud codebase. Each file is a dense decision recor
 - `exit-code-sentinel-not-context-err.md` — CLI exit-code mapping matches the package sentinel (`deploy.ErrInterrupted`) only; bare `context.Canceled` / `context.DeadlineExceeded` route to `ExitInternal` and the negative test cases lock that contract.
 - `gomock-fifo-matching.md` — `go.uber.org/mock` matches expectations FIFO, not LIFO; harness `AnyTimes()` defaults need an explicit opt-out option for tests that want a different response.
 - `cancellation-symmetry-audit.md` — when fixing a `context.Canceled` mis-wrap at one site, audit every sibling forward-progress branch on the same request ctx; Linus's iter2 Issue 1 was the §3.4.5 sibling caught only on impl re-review, not in the v2 plan pass.
+- `two-sentinels-for-two-failure-modes.md` — two semantically distinct rejection reasons get two distinct sentinels (not one umbrella); test pattern is `errors.Is`-positive AND `errors.Is`-negative-on-the-other, so a future "simplification" that folds them fails at PR time. Live: `ErrEmptyService` + `ErrInvalidService` in `internal/dockerdrv/driver.go`.
+- `identity-as-field-not-derived.md` — flow identity (`Service`) as an explicit struct field; do NOT recover it via `strings.TrimPrefix(otherField, "prefix-")`. The TrimPrefix smell couples two fields by an invisible string-shape contract that breaks silently on future renames. Driver-layer guard catches zero-value accidents on new call sites.
 
 ## Implementation gotchas
 
@@ -38,6 +41,8 @@ Tactical reference for the Decloud codebase. Each file is a dense decision recor
 - `fix-now-while-fresh.md` — Don's repeated rule for in-task defects: fix in scope when mechanical + same-file + <5-minute floor + on-theme; defer when it requires new architecture or a different package's review surface. Captures the lockdown rationale across deploy-cleanup v2.1 and v2.2.
 - `phantom-scope-kill.md` — inverse of fix-while-fresh: when handed-down prose names "X hardening" or "Y improvements" without a runtime/test referent, trace four ways before letting it expand scope; if all traces empty, kill the phrase explicitly. M2 killed "env-file hardening" as residue from the M3a-bundle resequence.
 - `stderr-substring-canary.md` — branching on a third-party tool's stderr is fundamentally brittle; the mitigation is a canary test that fails loudly when the upstream wording shifts. Match canonical strings only, co-locate detection with its single caller (not the driver), lock with sub-tests-per-substring + a negative branch assertion. Live example: `isPortsBoundErr` in `internal/caddy/manager.go`.
+- `guard-fires-before-exec.md` — rejection tests for guards-before-side-effects assert `assert.Empty(t, records)` on the recording fake-exec, not just `require.Error`. A future refactor that moves the guard AFTER `cmd.Run` still returns an error and silently leaks the side effect; the negative-record assertion is the lock. Pairs with the no-Docker-on-dev-box constraint that already forces argv-recording test shape.
+- `sealed-at-create-lock-with-notcontains.md` — when external state is sealed at create-time (Docker's `HostConfig.LogConfig`), the lifecycle-path argv tests carry `assert.NotContains` rows for every create-time flag. Positive `Contains` on the create path + negative `NotContains` on every start/restart path. Locks both directions of the invariant. Live: `TestCLIDriver_StartArgs` rejects `--log-driver` and `--log-opt`.
 - `compile-clean-not-run-clean.md` — two paired rules: (1) opt-in tests that need real external services need an actual PASS run-log, not a `go build -tags integration` log; (2) opt-in tests do NOT gate squash-merge when the user-visible surface is independently unit-tested. M2 v1 alpine-no-Cmd bug + closeout run-log-gate reversal.
 
 ## Cross-references for shapes worth borrowing
@@ -46,7 +51,7 @@ Tactical reference for the Decloud codebase. Each file is a dense decision recor
 
 ## Backlog
 
-- `m1x-backlog.md` — five items deferred from M1 with explicit Don/Linus sign-off (NetworkEnsure-in-Start gap, lifecycle-command dedup, `assert.ErrorIs` migration, `Capture("")` comment, log-warning quiet mode).
+- `m1x-backlog.md` — twelve items deferred or split off across M1/M1.x/M2 with explicit Don/Linus sign-off (NetworkEnsure-in-Start gap, lifecycle-command dedup, `assert.ErrorIs` migration, `Capture("")` comment, log-warning quiet mode, integration-test partial-ship, caddy cleanup-context, `restoreOldContainer` errors.Join, reloader stderr `%q`, curl-through-Caddy ingress test, `Run`/`RunWithOptions` consolidation, `decloud logs --history` journald wrapper). Maintenance: strike through and link to commit when picking up; leave one release before deletion.
 
 ## Source-of-truth task artefacts
 

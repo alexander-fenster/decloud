@@ -67,6 +67,7 @@ func TestCLIDriver_BuildArgs(t *testing.T) {
 }
 
 //	docker run -d --name decloud-foo --network decloud --restart unless-stopped \
+//	  --log-driver journald --log-opt tag=decloud/foo \
 //	  --env A=1 --env B=2 --env C=3 --label decloud.service=foo decloud-foo:abc123
 func TestCLIDriver_RunArgsWithEnvSorted(t *testing.T) {
 	var records []recordedCmd
@@ -74,6 +75,7 @@ func TestCLIDriver_RunArgsWithEnvSorted(t *testing.T) {
 
 	_, err := d.Run(context.Background(), RunRequest{
 		Name:    "decloud-foo",
+		Service: "foo",
 		Image:   "decloud-foo:abc123",
 		Network: "decloud",
 		Env:     map[string]string{"C": "3", "A": "1", "B": "2"},
@@ -87,6 +89,8 @@ func TestCLIDriver_RunArgsWithEnvSorted(t *testing.T) {
 		"--name", "decloud-foo",
 		"--network", "decloud",
 		"--restart", "unless-stopped",
+		"--log-driver", "journald",
+		"--log-opt", "tag=decloud/foo",
 		"--env", "A=1",
 		"--env", "B=2",
 		"--env", "C=3",
@@ -96,6 +100,7 @@ func TestCLIDriver_RunArgsWithEnvSorted(t *testing.T) {
 }
 
 //	docker run -d --name decloud-foo --network decloud --restart unless-stopped \
+//	  --log-driver journald --log-opt tag=decloud/foo \
 //	  --label decloud.service=foo decloud-foo:abc123
 func TestCLIDriver_RunArgsWithEmptyEnv(t *testing.T) {
 	var records []recordedCmd
@@ -103,6 +108,7 @@ func TestCLIDriver_RunArgsWithEmptyEnv(t *testing.T) {
 
 	_, err := d.Run(context.Background(), RunRequest{
 		Name:    "decloud-foo",
+		Service: "foo",
 		Image:   "decloud-foo:abc123",
 		Network: "decloud",
 		Restart: "unless-stopped",
@@ -112,6 +118,10 @@ func TestCLIDriver_RunArgsWithEmptyEnv(t *testing.T) {
 	for _, arg := range records[0].Args {
 		assert.NotEqual(t, "--env", arg, "no --env flags should appear when env map is empty")
 	}
+	assert.Contains(t, records[0].Args, "--log-driver")
+	assert.Contains(t, records[0].Args, "journald")
+	assert.Contains(t, records[0].Args, "--log-opt")
+	assert.Contains(t, records[0].Args, "tag=decloud/foo")
 }
 
 // docker stop -t 10 decloud-foo
@@ -132,6 +142,10 @@ func TestCLIDriver_StartArgs(t *testing.T) {
 	require.NoError(t, d.Start(context.Background(), "decloud-foo"))
 	require.Len(t, records, 1)
 	assert.Equal(t, []string{"start", "decloud-foo"}, records[0].Args)
+	assert.NotContains(t, records[0].Args, "--log-driver",
+		"docker start must NOT re-emit journald flags; HostConfig.LogConfig is sealed at create time")
+	assert.NotContains(t, records[0].Args, "--log-opt",
+		"docker start must NOT re-emit journald flags; HostConfig.LogConfig is sealed at create time")
 }
 
 // docker rm decloud-foo
@@ -349,6 +363,7 @@ func TestCLIDriver_ExecPropagatesGenericError(t *testing.T) {
 
 // docker run -d --name decloud-caddy --network decloud --restart unless-stopped \
 //
+//	--log-driver journald --log-opt tag=decloud/caddy \
 //	--label decloud.managed=caddy \
 //	-p 0.0.0.0:80:80/tcp -p [::]:80:80/tcp \
 //	-p 0.0.0.0:443:443/tcp -p [::]:443:443/tcp \
@@ -369,6 +384,8 @@ func TestCLIDriver_RunWithOptionsCaddyShape(t *testing.T) {
 		"--name", "decloud-caddy",
 		"--network", "decloud",
 		"--restart", "unless-stopped",
+		"--log-driver", "journald",
+		"--log-opt", "tag=decloud/caddy",
 		"--label", "decloud.managed=caddy",
 		"-p", "0.0.0.0:80:80/tcp",
 		"-p", "[::]:80:80/tcp",
@@ -389,6 +406,7 @@ func TestCLIDriver_RunWithOptionsDualStackPorts(t *testing.T) {
 
 	_, err := d.RunWithOptions(context.Background(), RunOptions{
 		Name:    "x",
+		Service: "x",
 		Image:   "img",
 		Network: "decloud",
 		Restart: "no",
@@ -404,6 +422,7 @@ func TestCLIDriver_RunWithOptionsDualStackPorts(t *testing.T) {
 
 // docker run -d --name decloud-foo --network decloud --restart unless-stopped \
 //
+//	--log-driver journald --log-opt tag=decloud/foo \
 //	--label decloud.service=foo -v /host:/dst:ro -v vol:/dst decloud-foo:abc123
 func TestCLIDriver_RunPassesVolumeFlags(t *testing.T) {
 	var records []recordedCmd
@@ -411,6 +430,7 @@ func TestCLIDriver_RunPassesVolumeFlags(t *testing.T) {
 
 	_, err := d.Run(context.Background(), RunRequest{
 		Name:    "decloud-foo",
+		Service: "foo",
 		Image:   "decloud-foo:abc123",
 		Network: "decloud",
 		Restart: "unless-stopped",
@@ -429,7 +449,7 @@ func TestCLIDriver_RunWithOptionsBindReadOnly(t *testing.T) {
 	d := driverWith(recordingFactory(&records))
 
 	_, err := d.RunWithOptions(context.Background(), RunOptions{
-		Name: "x", Image: "img", Network: "n", Restart: "no",
+		Name: "x", Service: "x", Image: "img", Network: "n", Restart: "no",
 		Volumes: []VolumeMount{
 			{Source: "/host", Target: "/dst", ReadOnly: true, IsNamed: false},
 		},
@@ -443,7 +463,7 @@ func TestCLIDriver_RunWithOptionsNamedVolumeNotReadOnly(t *testing.T) {
 	d := driverWith(recordingFactory(&records))
 
 	_, err := d.RunWithOptions(context.Background(), RunOptions{
-		Name: "x", Image: "img", Network: "n", Restart: "no",
+		Name: "x", Service: "x", Image: "img", Network: "n", Restart: "no",
 		Volumes: []VolumeMount{
 			{Source: "vol", Target: "/dst", ReadOnly: false, IsNamed: true},
 		},
@@ -457,7 +477,7 @@ func TestCLIDriver_RunWithOptionsLabelsSorted(t *testing.T) {
 	d := driverWith(recordingFactory(&records))
 
 	_, err := d.RunWithOptions(context.Background(), RunOptions{
-		Name: "x", Image: "img", Network: "n", Restart: "no",
+		Name: "x", Service: "x", Image: "img", Network: "n", Restart: "no",
 		Labels: map[string]string{"b": "2", "a": "1"},
 	})
 	require.NoError(t, err)
@@ -469,7 +489,7 @@ func TestCLIDriver_RunWithOptionsPortsDeclaredOrder(t *testing.T) {
 	d := driverWith(recordingFactory(&records))
 
 	_, err := d.RunWithOptions(context.Background(), RunOptions{
-		Name: "x", Image: "img", Network: "n", Restart: "no",
+		Name: "x", Service: "x", Image: "img", Network: "n", Restart: "no",
 		Ports: []PortMap{
 			{HostBind: "0.0.0.0", HostPort: 443, ContainerPort: 443, Proto: "tcp"},
 			{HostBind: "0.0.0.0", HostPort: 80, ContainerPort: 80, Proto: "tcp"},
@@ -485,7 +505,7 @@ func TestCLIDriver_RunWithOptionsPortDefaultProto(t *testing.T) {
 	d := driverWith(recordingFactory(&records))
 
 	_, err := d.RunWithOptions(context.Background(), RunOptions{
-		Name: "x", Image: "img", Network: "n", Restart: "no",
+		Name: "x", Service: "x", Image: "img", Network: "n", Restart: "no",
 		Ports: []PortMap{
 			{HostBind: "0.0.0.0", HostPort: 80, ContainerPort: 80},
 		},
@@ -499,7 +519,7 @@ func TestCLIDriver_RunWithOptionsEmptyHostBind(t *testing.T) {
 	d := driverWith(recordingFactory(&records))
 
 	_, err := d.RunWithOptions(context.Background(), RunOptions{
-		Name: "x", Image: "img", Network: "n", Restart: "no",
+		Name: "x", Service: "x", Image: "img", Network: "n", Restart: "no",
 		Ports: []PortMap{
 			{HostBind: "", HostPort: 80, ContainerPort: 80, Proto: "tcp"},
 		},
@@ -523,9 +543,165 @@ func TestFormatPortMap_EmptyHostBindOmitsBindSegment(t *testing.T) {
 	}))
 }
 
+// Run rejects an empty Service before shelling out: the journald tag schema
+// (decloud/<service>) requires a non-empty service name to be unambiguous.
+func TestCLIDriver_RunReturnsErrEmptyServiceWhenServiceIsEmpty(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.Run(context.Background(), RunRequest{
+		Name:    "decloud-foo",
+		Image:   "decloud-foo:abc123",
+		Network: "decloud",
+		Restart: "unless-stopped",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrEmptyService),
+		"empty Service must return ErrEmptyService sentinel for caller error-chain matching")
+	assert.False(t, errors.Is(err, ErrInvalidService),
+		"empty-Service error must NOT match ErrInvalidService — the two sentinels are distinct")
+	assert.Empty(t, records,
+		"no docker process must be spawned when Service is empty (guard fires before cmd.Run)")
+}
+
+// RunWithOptions rejects an empty Service before shelling out (caddy path).
+func TestCLIDriver_RunWithOptionsReturnsErrEmptyServiceWhenServiceIsEmpty(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.RunWithOptions(context.Background(), RunOptions{
+		Name:    "decloud-caddy",
+		Image:   "caddy:2",
+		Network: "decloud",
+		Restart: "unless-stopped",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrEmptyService),
+		"empty Service must return ErrEmptyService sentinel for caller error-chain matching")
+	assert.False(t, errors.Is(err, ErrInvalidService),
+		"empty-Service error must NOT match ErrInvalidService — the two sentinels are distinct")
+	assert.Empty(t, records,
+		"no docker process must be spawned when Service is empty (guard fires before cmd.Run)")
+}
+
+// Run rejects Service containing '/' before shelling out: a slash would make
+// the journald tag `decloud/foo/bar`, which collides with the prefix query
+// `journalctl CONTAINER_TAG=decloud/foo`.
+func TestCLIDriver_RunReturnsErrInvalidServiceWhenServiceContainsSlash(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.Run(context.Background(), RunRequest{
+		Name:    "decloud-foo",
+		Service: "foo/bar",
+		Image:   "decloud-foo:abc123",
+		Network: "decloud",
+		Restart: "unless-stopped",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrInvalidService),
+		"Service containing '/' must return ErrInvalidService sentinel for caller error-chain matching")
+	assert.False(t, errors.Is(err, ErrEmptyService),
+		"slash-in-Service error must NOT match ErrEmptyService — the two sentinels are distinct")
+	assert.Empty(t, records,
+		"no docker process must be spawned when Service is invalid (guard fires before cmd.Run)")
+}
+
+// RunWithOptions rejects Service containing '/' before shelling out (caddy path).
+func TestCLIDriver_RunWithOptionsReturnsErrInvalidServiceWhenServiceContainsSlash(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.RunWithOptions(context.Background(), RunOptions{
+		Name:    "decloud-caddy",
+		Service: "caddy/v2",
+		Image:   "caddy:2",
+		Network: "decloud",
+		Restart: "unless-stopped",
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrInvalidService),
+		"Service containing '/' must return ErrInvalidService sentinel for caller error-chain matching")
+	assert.False(t, errors.Is(err, ErrEmptyService),
+		"slash-in-Service error must NOT match ErrEmptyService — the two sentinels are distinct")
+	assert.Empty(t, records,
+		"no docker process must be spawned when Service is invalid (guard fires before cmd.Run)")
+}
+
+// Run emits --log-driver journald --log-opt tag=decloud/<service> as 4
+// contiguous tokens. Locks the exact tag literal so a future refactor cannot
+// silently flip the format to `decloud-<service>`, bare `<service>`, or a
+// Go-template placeholder.
+func TestCLIDriver_RunEmitsJournaldFlagsWithSlashTagLiteral(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.Run(context.Background(), RunRequest{
+		Name:    "decloud-foo",
+		Service: "foo",
+		Image:   "decloud-foo:abc123",
+		Network: "decloud",
+		Restart: "unless-stopped",
+	})
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	args := records[0].Args
+	driverIdx := indexOf(args, "--log-driver")
+	require.GreaterOrEqual(t, driverIdx, 0, "--log-driver must appear in argv")
+	require.Equal(t, "journald", args[driverIdx+1],
+		"--log-driver value must be exactly \"journald\"")
+
+	optIdx := indexOf(args, "--log-opt")
+	require.GreaterOrEqual(t, optIdx, 0, "--log-opt must appear in argv")
+	require.Equal(t, "tag=decloud/foo", args[optIdx+1],
+		"tag must be literal \"decloud/foo\" — NOT \"decloud-foo\", NOT \"{{.Name}}\", NOT bare \"foo\"")
+
+	require.Equal(t, driverIdx+2, optIdx,
+		"--log-opt must immediately follow --log-driver journald (4 contiguous tokens)")
+}
+
+// RunWithOptions emits --log-opt tag=decloud/caddy on the caddy path. The
+// caddy tag is the only journald-flag literal that differs between the two
+// `docker run` argv builders — without this test a future refactor that
+// hardcodes the wrong tag in RunWithOptions would only surface in Linux
+// integration smoke.
+func TestCLIDriver_RunWithOptionsEmitsJournaldFlagsWithCaddyTag(t *testing.T) {
+	var records []recordedCmd
+	d := driverWith(recordingFactory(&records))
+
+	_, err := d.RunWithOptions(context.Background(), caddyRunOptionsFixture())
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+
+	args := records[0].Args
+	driverIdx := indexOf(args, "--log-driver")
+	require.GreaterOrEqual(t, driverIdx, 0, "--log-driver must appear in argv")
+	require.Equal(t, "journald", args[driverIdx+1],
+		"--log-driver value must be exactly \"journald\"")
+
+	optIdx := indexOf(args, "--log-opt")
+	require.GreaterOrEqual(t, optIdx, 0, "--log-opt must appear in argv")
+	require.Equal(t, "tag=decloud/caddy", args[optIdx+1],
+		"caddy tag must be literal \"decloud/caddy\" — NOT \"decloud/foo\", NOT \"decloud-caddy\", NOT \"caddy\"")
+
+	require.Equal(t, driverIdx+2, optIdx,
+		"--log-opt must immediately follow --log-driver journald (4 contiguous tokens)")
+}
+
+func indexOf(args []string, needle string) int {
+	for i, a := range args {
+		if a == needle {
+			return i
+		}
+	}
+	return -1
+}
+
 func caddyRunOptionsFixture() RunOptions {
 	return RunOptions{
 		Name:    "decloud-caddy",
+		Service: "caddy",
 		Image:   "caddy:2",
 		Network: "decloud",
 		Restart: "unless-stopped",

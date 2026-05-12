@@ -124,6 +124,7 @@ func (m *cliManager) IsRunning(ctx context.Context) (bool, error) {
 func (m *cliManager) runOpts() dockerdrv.RunOptions {
 	return dockerdrv.RunOptions{
 		Name:    ContainerName,
+		Service: "caddy",
 		Image:   DefaultImage,
 		Network: NetworkName,
 		Restart: "unless-stopped",

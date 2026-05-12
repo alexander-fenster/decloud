@@ -112,6 +112,18 @@ Five items punted out of M1 with explicit Don/Linus sign-off. Each was a non-blo
 
 **Future-author note (Linus Observation A, recorded at M2 closeout):** When picking up this consolidation, the unified `RunOptions` should grow `Cmd []string` so future integration tests (or one-shot job/migration runners at M5+) don't need to pick a specific image with an idle CMD. The M2 integration test exposed this gap: `alpine:3.19` exits under `docker run -d` because its default CMD is `/bin/sh` reading closed stdin; M2 worked around this by switching the test to `nginx:alpine` (which idles in the foreground). Adding `Cmd []string` to the consolidated `RunOptions` removes that constraint and aligns the run path with `ExecOptions.Cmd`. Source: `_tasks/2026-04-28-m2-server-side-mounts/011-linus-impl-review.md` §"Observation A".
 
+**Future-author note (journald-log-driver closeout, Don's P3):** When consolidating, `grep -F 'RunRequest/RunOptions' internal/dockerdrv/` and update the matching error-message strings. `ErrEmptyService`'s message ("populate Service in RunRequest/RunOptions") names both types verbatim; folding to one type leaves a stale literal that future maintainers will have to chase as a hallucination later. One-grep fix at consolidation time. Source: `_tasks/2026-05-12-journald-log-driver/10-don-final-check.md` §9 P3.
+
+## 12. `decloud logs --history` to surface the journald cross-redeploy archive
+
+**Where:** `internal/cli/logs.go` (current `decloud logs` is a thin pass-through to `docker logs` via `Driver.Logs`). The host journal already holds every line every Decloud-managed container has ever written, tagged `decloud/<service>` — the operator can already query it with `journalctl CONTAINER_TAG=decloud/<service>` per `_docs/usage.md` §6. The follow-up is to wrap that query behind a CLI flag so operators don't need to know the tag scheme.
+
+**Why deferred:** Out of scope for the journald-log-driver task per Don's plan §6 and Joel's tech plan §10.9. The journald change itself is the load-bearing part (every container now writes to the host journal under a stable tag); the UX wrapper is a separate concern with its own design surface (flag shape, output formatting, `-f` semantics across journald vs `docker logs`, what to do when both ranges overlap).
+
+**Fix shape:** add a `--history` (or `--since`, or both) flag to `decloud logs <name>`. Under the hood, shell out to `journalctl CONTAINER_TAG=decloud/<name>` with the operator's flags translated (`--tail N` → `-n N`, `-f` → `-f`, plus a new `--since` pass-through). Detect journald-driver containers via `docker inspect --format '{{.HostConfig.LogConfig.Type}}'` and fall back to `docker logs` if the driver is something else (defensive — Decloud always sets journald, but a hand-attached container or a future driver change shouldn't break the CLI). Decide whether `--history` is an explicit opt-in (preserves the "current container only" default `decloud logs` behaviour) or whether `decloud logs` switches to journald-by-default with a flag to opt out. Pick at fix time. Add an integration test under `internal/integration/` that asserts log lines from a pre-redeploy container are reachable through the new flag.
+
+**Originator:** Don §6 of `_tasks/2026-05-12-journald-log-driver/02-plan.md`; Joel §10.9 of `_tasks/2026-05-12-journald-log-driver/03-tech-plan.md`. Acknowledged at task ship time as deferred follow-up.
+
 ---
 
 ## Maintenance note

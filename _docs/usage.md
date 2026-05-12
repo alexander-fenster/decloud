@@ -161,7 +161,7 @@ What the deploy actually does, in order:
 1. Capture the environment from `env.sh` (skipped if no env script is in play).
 2. Build the image with `docker build`.
 3. Stop and remove any previous container for this service. On a fresh deploy (no registry entry), inspect any container that already happens to be named `decloud-<name>`: if it carries the `decloud.service=<name>` label, treat it as an orphan from a prior interrupted deploy and remove it; if the label is missing or mismatched, refuse with exit 40 (see [§8](#8-interrupting-a-deploy-ctrlc)).
-4. Run the new container on the `decloud` network.
+4. Run the new container on the `decloud` network. Every Decloud-managed container (services and `decloud-caddy` both) is started with `--log-driver=journald --log-opt tag=decloud/<service>`, so logs survive container redeployment in the host journal. `decloud logs` keeps working unchanged because the journald driver supports `docker logs` natively; cross-redeploy history is queryable on the host with `journalctl CONTAINER_TAG=decloud/<service>` (see [§4](#4-lifecycle-commands) and [§6](#6-debugging-a-container-directly)).
 5. Wait for `GET <readiness-path>` to return `200 OK` from the host (probing the container's bridge IP directly; ports are not published to the host).
 6. Persist the service registration to `/opt/decloud/config/services/<name>.toml` and `/opt/decloud/secrets/<name>/env.toml`.
 7. Regenerate the Caddyfile, `docker exec decloud-caddy caddy validate` against a temporary file, atomically rename it into place, and `docker exec decloud-caddy caddy reload`. Requires `decloud caddy up` to have been run; if `decloud-caddy` is not running, the deploy exits 60 with a recovery hint pointing at `decloud caddy up`.
@@ -192,7 +192,7 @@ All M1 commands listed below. Each takes `--config-root` as the only persistent 
 - `decloud stop <name>` — `docker stop` with a 10-second grace period. The registry is not modified, no Caddy reload happens. While stopped, requests for the service's hostname return `502` from Caddy.
 - `decloud restart <name>` — stop, then start. Reuses the same container; does not rebuild. To recreate from source, run `deploy service` again.
 - `decloud status <name>` — runtime state plus registry view. Output is one line.
-- `decloud logs <name> [-f] [--tail N]` — pass-through to `docker logs`. `-f` follows; `--tail N` shows the last N lines (`0` means all).
+- `decloud logs <name> [-f] [--tail N]` — pass-through to `docker logs`. `-f` follows; `--tail N` shows the last N lines (`0` means all). Shows logs from the **current** container instance only. The journald log driver stores everything in the host journal, so logs from previous container generations (before a redeploy or `decloud restart`) are not reachable through `decloud logs` — query the host journal directly with `journalctl CONTAINER_TAG=decloud/<name>` (see [§6](#6-debugging-a-container-directly)).
 - `decloud caddy up` — bring up the `decloud-caddy` container on the shared `decloud` network with dual-stack publishing on `80/tcp`, `443/tcp`, `443/udp`. Idempotent: re-running while Caddy is already up logs `caddy already running` and exits 0. Pulls `caddy:2` on first run; uses named volumes `decloud_caddy_data` (ACME state, issued certs) and `decloud_caddy_config` (runtime config). Takes no flags — image and ports are fixed in M1. Run once after install; the container has `--restart=unless-stopped`, so reboots and Docker daemon restarts bring it back automatically.
 - `decloud caddy down` — stop and remove the `decloud-caddy` container with a 10-second grace period. The named volumes `decloud_caddy_data` and `decloud_caddy_config` are **not** removed — wipe them with `docker volume rm` if you need a clean ACME slate. Idempotent on an already-absent container.
 - `decloud caddy reload` — regenerate the Caddyfile from the registry, validate it inside the running `decloud-caddy` container via `docker exec caddy validate`, atomic-rename it into place, and `docker exec caddy reload`. Use this if you edited something out of band and need Caddy back in sync with the registry. Surface unchanged from M1.0; the implementation now `docker exec`s into the container instead of shelling a host `caddy` binary, so `decloud caddy up` must have been run first. **Warning:** this regenerates from registry state and discards any manual edits to `/opt/decloud/config/caddy/Caddyfile`. Edit the registry, not the Caddyfile.
@@ -277,6 +277,37 @@ wget -q -O- http://localhost:8080/healthz
 ```
 
 Substitute whichever HTTP client your image has (`curl`, `wget`, or whatever the language runtime ships). Do not modify the deploy to add `-p` host port mappings on service containers; the network model is part of M1 by design.
+
+### Reading logs across redeploys
+
+`decloud logs <name>` only sees the current container's log range — the container that `decloud status <name>` reports under `container=`. After a `decloud deploy service` (or any other path that recreates the container), the previous container is gone and its log range no longer answers `docker logs` queries.
+
+Decloud starts every container it manages with `--log-driver=journald --log-opt tag=decloud/<service>`, so every line the container wrote to stdout or stderr is preserved in the host journal under the `CONTAINER_TAG` field. Query it with `journalctl`:
+
+```sh
+# All log lines ever emitted by any container named decloud-myservice,
+# across redeploys and host reboots:
+journalctl CONTAINER_TAG=decloud/myservice
+
+# Just the last hour, follow as new lines arrive:
+journalctl CONTAINER_TAG=decloud/myservice --since '1 hour ago' -f
+
+# Caddy's own logs (the decloud-caddy container is tagged decloud/caddy):
+journalctl CONTAINER_TAG=decloud/caddy
+```
+
+The tag scheme is `decloud/<service>` for service containers and `decloud/caddy` for Caddy. `journalctl CONTAINER_TAG=` matches the field value exactly — there is no prefix or glob form. To see everything Decloud has written across services, list the services from the registry and pass one `CONTAINER_TAG=` per service (multiple matches against the same field are OR'd):
+
+```sh
+# Two services and Caddy, OR'd together:
+journalctl CONTAINER_TAG=decloud/myservice CONTAINER_TAG=decloud/other CONTAINER_TAG=decloud/caddy
+```
+
+Or grep the message body with `-g` (PCRE) once you have already narrowed by some other field. The leading `decloud/` namespace is a presentation aid for humans reading individual tags, not a queryable prefix.
+
+Service names containing `/` are rejected at the driver layer before any `docker run` happens, so the tag always has exactly one slash and `CONTAINER_TAG=decloud/<service>` is unambiguous. Empty service names are rejected the same way (both are programmer-error conditions surfaced as `ErrEmptyService` and `ErrInvalidService` from the `internal/dockerdrv` package — operators never see these).
+
+Journald retention is the operator's concern, not Decloud's. The host's `journald.conf` controls how far back history goes (`SystemMaxUse`, `MaxRetentionSec`). Decloud does not tune retention from the deploy path.
 
 ## 7. Recovering from `caddy reload` failures (exit 60)
 

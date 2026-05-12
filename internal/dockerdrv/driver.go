@@ -18,6 +18,20 @@ var (
 	// empty IP string. Typically transient; the readiness probe re-resolves
 	// on the next tick.
 	ErrNoBridgeIP = errors.New("dockerdrv: container has no bridge network IP")
+
+	// ErrEmptyService is returned by Run and RunWithOptions when the Service
+	// field on RunRequest/RunOptions is empty. The driver requires Service to
+	// populate the journald log-driver tag (decloud/<service>); an empty value
+	// is a programmer error at the call site — populate Service in the
+	// RunRequest/RunOptions literal.
+	ErrEmptyService = errors.New("dockerdrv: Service is empty; populate Service in RunRequest/RunOptions")
+
+	// ErrInvalidService is returned by Run and RunWithOptions when the Service
+	// field contains '/'. Service names must not contain '/' because the
+	// journald tag would become ambiguous under `journalctl
+	// CONTAINER_TAG=decloud/<service>` — a prefix match would also match
+	// `decloud/<service>/...`.
+	ErrInvalidService = errors.New("dockerdrv: Service contains '/'; journald tag would be ambiguous under journalctl CONTAINER_TAG= prefix queries")
 )
 
 type BuildRequest struct {
@@ -30,6 +44,7 @@ type BuildRequest struct {
 
 type RunRequest struct {
 	Name    string
+	Service string // service name (populates journald tag decloud/<Service>); required, must not contain '/'
 	Image   string
 	Network string
 	Env     map[string]string
@@ -76,6 +91,7 @@ type VolumeMount struct {
 // publishing, volume mounts, or labels (currently: caddy.Manager).
 type RunOptions struct {
 	Name    string
+	Service string // service name (populates journald tag decloud/<Service>); required, must not contain '/'
 	Image   string
 	Network string
 	Restart string

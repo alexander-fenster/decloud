@@ -55,6 +55,7 @@ func exitedInspect() dockerdrv.InspectResult {
 func expectedCaddyRunOptions(paths config.Paths) dockerdrv.RunOptions {
 	return dockerdrv.RunOptions{
 		Name:    caddy.ContainerName,
+		Service: "caddy",
 		Image:   caddy.DefaultImage,
 		Network: caddy.NetworkName,
 		Restart: "unless-stopped",

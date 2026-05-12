@@ -11,6 +11,7 @@ For day-to-day usage, see [`usage.md`](./usage.md).
 - Linux host with root access and outbound HTTPS to package mirrors and Docker Hub.
 - DNS records for any public hostnames you intend to deploy must already point at the host so Caddy can complete ACME challenges. AAAA records are fine — `decloud caddy up` publishes 80/443 on both IPv4 and IPv6.
 - Go toolchain on the host if you intend to `go install` the binary (otherwise build elsewhere and copy).
+- The Docker daemon must run under systemd. Every container Decloud starts uses the journald log driver so logs survive container redeployment (see [`usage.md` §6](./usage.md#reading-logs-across-redeploys)); the daemon needs systemd to write to journald. The default Docker Engine install (`systemctl enable --now docker` in [§2](#2-install-docker)) satisfies this.
 
 ## 2. Install Docker
 

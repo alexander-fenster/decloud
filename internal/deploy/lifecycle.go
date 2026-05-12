@@ -66,6 +66,7 @@ func (d *serviceDeployer) Start(ctx context.Context, name string) error {
 	default:
 		runReq := dockerdrv.RunRequest{
 			Name:    containerName,
+			Service: name,
 			Image:   prev.Config.Build.ImageRef,
 			Network: "decloud",
 			Env:     prev.Secrets.Env,

@@ -243,6 +243,7 @@ func (d *serviceDeployer) Deploy(ctx context.Context, req Request) error {
 
 	runReq := dockerdrv.RunRequest{
 		Name:    containerName,
+		Service: req.Name,
 		Image:   imageRef,
 		Network: "decloud",
 		Env:     captured,
@@ -375,6 +376,7 @@ func (d *serviceDeployer) restoreOldContainer(cleanupCtx context.Context, prev *
 	}
 	runReq := dockerdrv.RunRequest{
 		Name:    ids.ContainerName(prev.Config.Name),
+		Service: prev.Config.Name,
 		Image:   prev.Config.Build.ImageRef,
 		Network: "decloud",
 		Env:     prev.Secrets.Env,

@@ -853,6 +853,8 @@ func TestDeploy_RunRequestUsesCapturedEnvAndDecloudNetwork(t *testing.T) {
 	assert.Equal(t, "decloud", seen.Network)
 	assert.Equal(t, "decloud-foo", seen.Name)
 	assert.True(t, reflect.DeepEqual(captured, seen.Env), "RunRequest.Env must equal captured env")
+	assert.Equal(t, "foo", seen.Service,
+		"RunRequest.Service must equal req.Name so the driver derives tag=decloud/foo")
 }
 
 func TestDeploy_NoEnvScript_SkipsCapturerEntirely(t *testing.T) {
@@ -1016,6 +1018,7 @@ func TestDeploy_RestoreOldContainerPassesVolumesToDriver(t *testing.T) {
 		{HostPath: "oldvol", ContainerPath: "/var/lib", ReadOnly: true},
 	}
 	var rollbackVolumes []dockerdrv.VolumeMount
+	var rollbackSvc string
 
 	h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
 	h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
@@ -1028,6 +1031,7 @@ func TestDeploy_RestoreOldContainerPassesVolumesToDriver(t *testing.T) {
 		h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).
 			DoAndReturn(func(_ context.Context, req dockerdrv.RunRequest) (string, error) {
 				rollbackVolumes = req.Volumes
+				rollbackSvc = req.Service
 				return "rb-cid", nil
 			}),
 	)
@@ -1037,4 +1041,6 @@ func TestDeploy_RestoreOldContainerPassesVolumesToDriver(t *testing.T) {
 	assert.True(t, errors.Is(err, deploy.ErrRun))
 	assert.Equal(t, expectedVolumes(prev.Config.Run.Mounts), rollbackVolumes,
 		"rollback must re-apply prev.Config.Run.Mounts so the recreate strategy preserves volumes")
+	assert.Equal(t, "foo", rollbackSvc,
+		"rollback RunRequest.Service must equal prev.Config.Name so the restored container shares the journald tag")
 }
