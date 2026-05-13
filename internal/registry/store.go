@@ -25,6 +25,17 @@ type Store interface {
 	DeleteOrphanConfig(ctx context.Context, name string) error
 	List(ctx context.Context) ([]*Service, error)
 	Delete(ctx context.Context, name string) error
+
+	// ListNames returns the bare names of every registered service
+	// (config TOML present in ServicesDir), sorted byte-order. Missing
+	// ServicesDir returns (nil, nil), matching List's behaviour. Other
+	// directory-read errors are wrapped and returned.
+	//
+	// Unlike List, ListNames does NOT Load each service, so callers see
+	// names whose config or secrets would fail to load. Callers that need
+	// the loaded *Service must call Load(name) per name and handle the
+	// per-service errors themselves.
+	ListNames(ctx context.Context) ([]string, error)
 }
 
 // NewFSStore returns the filesystem-backed Store implementation.
@@ -172,7 +183,7 @@ func (s *fsStore) DeleteOrphanConfig(ctx context.Context, name string) error {
 	return nil
 }
 
-func (s *fsStore) List(ctx context.Context) ([]*Service, error) {
+func (s *fsStore) ListNames(ctx context.Context) ([]string, error) {
 	entries, err := os.ReadDir(s.paths.ServicesDir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -192,10 +203,19 @@ func (s *fsStore) List(ctx context.Context) ([]*Service, error) {
 		names = append(names, strings.TrimSuffix(n, ".toml"))
 	}
 	sort.Strings(names)
+	return names, nil
+}
+
+func (s *fsStore) List(ctx context.Context) ([]*Service, error) {
+	names, err := s.ListNames(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]*Service, 0, len(names))
 	for _, name := range names {
 		svc, err := s.Load(ctx, name)
 		if err != nil {
+			// existing silent-skip contract; Caddyfile path depends on it
 			continue
 		}
 		out = append(out, svc)

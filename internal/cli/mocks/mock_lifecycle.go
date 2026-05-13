@@ -112,6 +112,21 @@ func (mr *MockLifecycleMockRecorder) Status(ctx, name any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Status", reflect.TypeOf((*MockLifecycle)(nil).Status), ctx, name)
 }
 
+// StatusAll mocks base method.
+func (m *MockLifecycle) StatusAll(ctx context.Context) ([]deploy.Status, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "StatusAll", ctx)
+	ret0, _ := ret[0].([]deploy.Status)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// StatusAll indicates an expected call of StatusAll.
+func (mr *MockLifecycleMockRecorder) StatusAll(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StatusAll", reflect.TypeOf((*MockLifecycle)(nil).StatusAll), ctx)
+}
+
 // Stop mocks base method.
 func (m *MockLifecycle) Stop(ctx context.Context, name string) error {
 	m.ctrl.T.Helper()

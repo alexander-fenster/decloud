@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -436,6 +437,162 @@ func TestLifecycle_StatusServiceNotFoundReturnsErrNotFound(t *testing.T) {
 	_, err := h.lc.Status(context.Background(), "foo")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, registry.ErrNotFound))
+}
+
+// ----------------------------------------------------------------------------
+// StatusAll (Joel §6.2)
+// ----------------------------------------------------------------------------
+
+func serviceNamed(name string) *registry.Service {
+	svc := newRegisteredService()
+	svc.Config.Name = name
+	svc.Secrets.Name = name
+	return svc
+}
+
+func statusByName(statuses []deploy.Status, name string) (deploy.Status, bool) {
+	for _, s := range statuses {
+		if s.Name == name {
+			return s, true
+		}
+	}
+	return deploy.Status{}, false
+}
+
+func TestLifecycle_StatusAll_EmptyRegistryReturnsEmptySlice(t *testing.T) {
+	h := newLifecycleHarness(t)
+	h.store.EXPECT().ListNames(gomock.Any()).Return(nil, nil)
+
+	statuses, err := h.lc.StatusAll(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, statuses,
+		"empty ListNames must not produce any rows and must not call Inspect")
+}
+
+func TestLifecycle_StatusAll_HappyPathOrderedByName(t *testing.T) {
+	h := newLifecycleHarness(t)
+	h.store.EXPECT().ListNames(gomock.Any()).Return([]string{"bar", "foo"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "bar").Return(serviceNamed("bar"), nil)
+	h.driver.EXPECT().Inspect(gomock.Any(), "decloud-bar").
+		Return(dockerdrv.InspectResult{ContainerID: "cid-bar", State: "running"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "foo").Return(serviceNamed("foo"), nil)
+	h.driver.EXPECT().Inspect(gomock.Any(), "decloud-foo").
+		Return(dockerdrv.InspectResult{ContainerID: "cid-foo", State: "exited"}, nil)
+
+	statuses, err := h.lc.StatusAll(context.Background())
+	require.NoError(t, err)
+	require.Len(t, statuses, 2)
+	assert.Equal(t, "bar", statuses[0].Name)
+	assert.Equal(t, "running", statuses[0].State)
+	assert.Equal(t, "foo", statuses[1].Name)
+	assert.Equal(t, "stopped", statuses[1].State,
+		"exited container state must be rewritten to stopped, matching single-service Status")
+}
+
+func TestLifecycle_StatusAll_AbsentContainerSurfacesAbsentState(t *testing.T) {
+	h := newLifecycleHarness(t)
+	h.store.EXPECT().ListNames(gomock.Any()).Return([]string{"foo"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "foo").Return(serviceNamed("foo"), nil)
+	h.driver.EXPECT().Inspect(gomock.Any(), "decloud-foo").
+		Return(dockerdrv.InspectResult{State: "absent"}, nil)
+
+	statuses, err := h.lc.StatusAll(context.Background())
+	require.NoError(t, err)
+	require.Len(t, statuses, 1)
+	assert.Equal(t, "absent", statuses[0].State)
+	assert.Empty(t, statuses[0].ContainerID)
+}
+
+func TestLifecycle_StatusAll_ConfigOnlyOrphanSkipsInspect(t *testing.T) {
+	h := newLifecycleHarness(t)
+	h.store.EXPECT().ListNames(gomock.Any()).Return([]string{"foo"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "foo").Return(nil, registry.ErrSecretsMissing)
+
+	statuses, err := h.lc.StatusAll(context.Background())
+	require.NoError(t, err)
+	require.Len(t, statuses, 1)
+	assert.Equal(t, "foo", statuses[0].Name)
+	assert.Equal(t, "config-only", statuses[0].State)
+	assert.Empty(t, statuses[0].ContainerName,
+		"config-only row must not synthesise a container name")
+	assert.Empty(t, statuses[0].ErrorDetail,
+		"config-only is a documented row state, not an error row")
+}
+
+func TestLifecycle_StatusAll_PerServiceLoadErrorBecomesErrorRowWithoutAborting(t *testing.T) {
+	h := newLifecycleHarness(t)
+	h.store.EXPECT().ListNames(gomock.Any()).Return([]string{"a", "b", "c"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "a").Return(serviceNamed("a"), nil)
+	h.driver.EXPECT().Inspect(gomock.Any(), "decloud-a").
+		Return(dockerdrv.InspectResult{ContainerID: "cid-a", State: "running"}, nil)
+	brokenLoadErr := fmt.Errorf("decoding %w: schema_version mismatch", registry.ErrSchemaMismatch)
+	h.store.EXPECT().Load(gomock.Any(), "b").Return(nil, brokenLoadErr)
+	h.store.EXPECT().Load(gomock.Any(), "c").Return(serviceNamed("c"), nil)
+	h.driver.EXPECT().Inspect(gomock.Any(), "decloud-c").
+		Return(dockerdrv.InspectResult{ContainerID: "cid-c", State: "running"}, nil)
+
+	statuses, err := h.lc.StatusAll(context.Background())
+	require.NoError(t, err,
+		"a single per-service Load failure must not abort the multi-row listing")
+	require.Len(t, statuses, 3)
+	assert.Equal(t, []string{"a", "b", "c"}, []string{statuses[0].Name, statuses[1].Name, statuses[2].Name})
+	assert.Equal(t, "running", statuses[0].State)
+	assert.Equal(t, "error", statuses[1].State,
+		"per-service failures collapse to a single 'error' state token (Joel §0 over Don §3.3)")
+	assert.Contains(t, statuses[1].ErrorDetail, "schema_version mismatch",
+		"ErrorDetail must carry the underlying message verbatim for the CLI to print on stderr")
+	assert.Equal(t, "running", statuses[2].State)
+}
+
+func TestLifecycle_StatusAll_PerServiceInspectErrorBecomesErrorRow(t *testing.T) {
+	h := newLifecycleHarness(t)
+	h.store.EXPECT().ListNames(gomock.Any()).Return([]string{"good", "wedge"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "good").Return(serviceNamed("good"), nil)
+	h.driver.EXPECT().Inspect(gomock.Any(), "decloud-good").
+		Return(dockerdrv.InspectResult{ContainerID: "cid-good", State: "running"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "wedge").Return(serviceNamed("wedge"), nil)
+	h.driver.EXPECT().Inspect(gomock.Any(), "decloud-wedge").
+		Return(dockerdrv.InspectResult{}, errors.New("docker daemon unreachable"))
+
+	statuses, err := h.lc.StatusAll(context.Background())
+	require.NoError(t, err)
+	require.Len(t, statuses, 2)
+	good, ok := statusByName(statuses, "good")
+	require.True(t, ok)
+	assert.Equal(t, "running", good.State)
+	wedge, ok := statusByName(statuses, "wedge")
+	require.True(t, ok)
+	assert.Equal(t, "error", wedge.State)
+	assert.Contains(t, wedge.ErrorDetail, "docker daemon unreachable")
+}
+
+func TestLifecycle_StatusAll_VanishedServiceIsDroppedNotSynthesised(t *testing.T) {
+	h := newLifecycleHarness(t)
+	h.store.EXPECT().ListNames(gomock.Any()).Return([]string{"a", "ghost"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "a").Return(serviceNamed("a"), nil)
+	h.driver.EXPECT().Inspect(gomock.Any(), "decloud-a").
+		Return(dockerdrv.InspectResult{ContainerID: "cid-a", State: "running"}, nil)
+	h.store.EXPECT().Load(gomock.Any(), "ghost").
+		Return(nil, fmt.Errorf("loading service: %w", registry.ErrNotFound))
+
+	statuses, err := h.lc.StatusAll(context.Background())
+	require.NoError(t, err)
+	require.Len(t, statuses, 1,
+		"a service that vanishes between ListNames and Load is dropped, not surfaced as an error row")
+	assert.Equal(t, "a", statuses[0].Name)
+}
+
+func TestLifecycle_StatusAll_ListNamesFailureAbortsAndPropagates(t *testing.T) {
+	h := newLifecycleHarness(t)
+	h.store.EXPECT().ListNames(gomock.Any()).
+		Return(nil, errors.New("permission denied"))
+
+	statuses, err := h.lc.StatusAll(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "permission denied",
+		"host-level ListNames failure must propagate, not get absorbed into a row")
+	assert.Empty(t, statuses,
+		"on host-level failure the result is nil/empty, not a partial listing")
 }
 
 // ----------------------------------------------------------------------------

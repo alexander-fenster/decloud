@@ -84,6 +84,21 @@ func (mr *MockStoreMockRecorder) List(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockStore)(nil).List), ctx)
 }
 
+// ListNames mocks base method.
+func (m *MockStore) ListNames(ctx context.Context) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListNames", ctx)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListNames indicates an expected call of ListNames.
+func (mr *MockStoreMockRecorder) ListNames(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListNames", reflect.TypeOf((*MockStore)(nil).ListNames), ctx)
+}
+
 // Load mocks base method.
 func (m *MockStore) Load(ctx context.Context, name string) (*registry.Service, error) {
 	m.ctrl.T.Helper()

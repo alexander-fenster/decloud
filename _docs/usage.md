@@ -191,7 +191,7 @@ All M1 commands listed below. Each takes `--config-root` as the only persistent 
 - `decloud start <name>` — start a previously deployed service. If the container is `running`, no-op. If `exited`, runs `docker start`. If gone (`absent`), re-runs the container from the previously deployed image and the saved environment. `start` does not rebuild — that is `deploy service`'s job. If the image is no longer in the local cache, `start` fails with exit 40.
 - `decloud stop <name>` — `docker stop` with a 10-second grace period. The registry is not modified, no Caddy reload happens. While stopped, requests for the service's hostname return `502` from Caddy.
 - `decloud restart <name>` — stop, then start. Reuses the same container; does not rebuild. To recreate from source, run `deploy service` again.
-- `decloud status <name>` — runtime state plus registry view. Output is one line.
+- `decloud status [name]` — runtime state plus registry view. With a service name, prints one line for that service. Without an argument, prints one row per registered service as an aligned table on stdout. Passing more than one positional argument is a usage error (exit 2). See [§4.1](#status-format) for both output shapes.
 - `decloud logs <name> [-f] [--tail N]` — pass-through to `docker logs`. `-f` follows; `--tail N` shows the last N lines (`0` means all). Shows logs from the **current** container instance only. The journald log driver stores everything in the host journal, so logs from previous container generations (before a redeploy or `decloud restart`) are not reachable through `decloud logs` — query the host journal directly with `journalctl CONTAINER_TAG=decloud/<name>` (see [§6](#6-debugging-a-container-directly)).
 - `decloud caddy up` — bring up the `decloud-caddy` container on the shared `decloud` network with dual-stack publishing on `80/tcp`, `443/tcp`, `443/udp`. Idempotent: re-running while Caddy is already up logs `caddy already running` and exits 0. Pulls `caddy:2` on first run; uses named volumes `decloud_caddy_data` (ACME state, issued certs) and `decloud_caddy_config` (runtime config). Takes no flags — image and ports are fixed in M1. Run once after install; the container has `--restart=unless-stopped`, so reboots and Docker daemon restarts bring it back automatically.
 - `decloud caddy down` — stop and remove the `decloud-caddy` container with a 10-second grace period. The named volumes `decloud_caddy_data` and `decloud_caddy_config` are **not** removed — wipe them with `docker volume rm` if you need a clean ACME slate. Idempotent on an already-absent container.
@@ -199,18 +199,60 @@ All M1 commands listed below. Each takes `--config-root` as the only persistent 
 
 ### Status format
 
+`decloud status` has two output shapes selected by whether you pass a service name. Both are designed for `grep`/`awk` over SSH; neither is JSON.
+
+#### Single-service form
+
 `decloud status <name>` writes a single line:
 
 ```text
 <name> state=<state> container=<container-name> deploy=<deploy-id> deployed_at=<RFC3339>
 ```
 
-State values:
+The byte-level format is unchanged from earlier milestones; existing scripts that parse this line keep working.
+
+#### Multi-service form (no argument)
+
+`decloud status` (no positional argument) prints one row per registered service as an aligned five-column table on stdout. Columns, in order:
+
+```text
+NAME  STATE  CONTAINER  DEPLOY  DEPLOYED_AT
+```
+
+Rows are sorted by `NAME` (byte order, which matches the `[a-z][a-z0-9-]{0,38}` service-name regex). Columns are space-padded by the standard library's `text/tabwriter` — there are no embedded tab characters in the rendered output, so `awk` and `cut -d' '` both work. Empty cells render as a single `-` so every row keeps the five-column shape.
+
+Example output for two healthy services plus one with a broken registry entry:
+
+```text
+NAME        STATE    CONTAINER    DEPLOY                  DEPLOYED_AT
+bar         stopped  decloud-bar  20260426-102001-aa11bb  2026-04-26T10:20:01Z
+broken-svc  error    -            -                       -
+foo         running  decloud-foo  20260426-093214-7f3a9c  2026-04-26T09:32:14Z
+```
+
+If the registry is empty, the header line is printed alone — no body rows, no sentinel sentence. Scripts that pipe through `awk '$2 == "running"'` get an empty result rather than a parse error.
+
+##### Per-row error policy
+
+A service whose config or secrets are unreadable, or whose container cannot be inspected, becomes a row with `STATE=error` and `-` in every other data column. The listing itself still exits `0` — one broken service does not poison the rest of the output. The wrapped error message is written to **stderr** as a companion line of the form:
+
+```text
+status: <name>: <wrapped error text>
+```
+
+Redirecting stderr is enough to suppress these diagnostics (`decloud status 2>/dev/null`); the stdout table is unaffected. A service that disappears between the directory scan and the per-service load (a concurrent `decloud unregister`) is dropped from the listing rather than synthesised as an error — by the time the operator reads the output, an `error` row for a service that no longer exists would be misleading.
+
+If the registry directory itself cannot be read (permissions, missing mount), `decloud status` aborts with no stdout and exits `70` (`ExitInternal`). Passing more than one positional argument is rejected as a usage error and exits `2` (`ExitUsageError`).
+
+#### State values
+
+Both forms emit the same `STATE` enum — exactly five values:
 
 - `running` — container is running.
 - `stopped` — container exists and exited.
 - `absent` — registry has the service but the container is gone.
 - `config-only` — the config file exists but the secrets file is missing (a partial-deploy orphan). Run `decloud unregister <name>` to clean up.
+- `error` — multi-service form only. The row could not be populated; the wrapped detail is on stderr (see above).
 
 `<container-name>` is `decloud-<name>` in M1.
 
@@ -229,11 +271,20 @@ $ decloud deploy service \
 deploy: myservice ready
 ```
 
-Inspect:
+Inspect one service:
 
 ```sh
 $ decloud status myservice
 myservice state=running container=decloud-myservice deploy=20260426-093214-7f3a9c deployed_at=2026-04-26T09:32:14Z
+```
+
+Or list every registered service in one table:
+
+```sh
+$ decloud status
+NAME       STATE    CONTAINER          DEPLOY                  DEPLOYED_AT
+myservice  running  decloud-myservice  20260426-093214-7f3a9c  2026-04-26T09:32:14Z
+other      stopped  decloud-other      20260425-110000-def456  2026-04-25T11:00:00Z
 ```
 
 Watch the logs:

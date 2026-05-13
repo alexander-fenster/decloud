@@ -514,6 +514,96 @@ func TestStore_ListSkipsMalformedFiles(t *testing.T) {
 	assert.Equal(t, "good", got[0].Config.Name)
 }
 
+func TestStore_List_StillSilentlySkipsLoadErrors(t *testing.T) {
+	store, paths := newStore(t)
+	writeConfigFile(t, paths, "good", validConfigTOML)
+	writeSecretsFile(t, paths, "good", validSecretsTOML, 0o700, 0o600)
+	writeConfigFile(t, paths, "broken", "this = is = not = valid = toml\n")
+
+	got, err := store.List(context.Background())
+	require.NoError(t, err,
+		"List must absorb per-service Load failures (Caddyfile-regen path depends on this)")
+	require.Len(t, got, 1)
+	assert.Equal(t, "good", got[0].Config.Name)
+}
+
+func TestStore_ListNames_EmptyDirReturnsEmpty(t *testing.T) {
+	store, _ := newStore(t)
+
+	names, err := store.ListNames(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, names)
+}
+
+func TestStore_ListNames_MissingDirReturnsNilNoError(t *testing.T) {
+	root := t.TempDir()
+	paths := config.NewPaths(root)
+	store := registry.NewFSStore(paths)
+
+	names, err := store.ListNames(context.Background())
+	require.NoError(t, err,
+		"missing services dir must match List's contract: (nil, nil), not an error")
+	assert.Empty(t, names)
+}
+
+func TestStore_ListNames_FiltersNonTOMLAndInFlightTmpAndSubdirs(t *testing.T) {
+	store, paths := newStore(t)
+	writeConfigFile(t, paths, "alpha", validConfigTOML)
+	writeConfigFile(t, paths, "beta", validConfigTOML)
+	require.NoError(t, os.WriteFile(filepath.Join(paths.ServicesDir, "alpha.toml.tmp"), []byte("partial"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(paths.ServicesDir, "README"), []byte("not a service"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(paths.ServicesDir, "nested-dir"), 0o755))
+
+	names, err := store.ListNames(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"alpha", "beta"}, names)
+}
+
+func TestStore_ListNames_ResultIsSorted(t *testing.T) {
+	store, paths := newStore(t)
+	writeConfigFile(t, paths, "zebra", validConfigTOML)
+	writeConfigFile(t, paths, "apple", validConfigTOML)
+	writeConfigFile(t, paths, "mango", validConfigTOML)
+
+	names, err := store.ListNames(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"apple", "mango", "zebra"}, names)
+}
+
+func TestStore_ListNames_IncludesNamesEvenWhenLoadWouldFail(t *testing.T) {
+	store, paths := newStore(t)
+	writeConfigFile(t, paths, "good", validConfigTOML)
+	writeSecretsFile(t, paths, "good", validSecretsTOML, 0o700, 0o600)
+	writeConfigFile(t, paths, "broken", "this = is = not = valid = toml\n")
+
+	names, err := store.ListNames(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"broken", "good"}, names,
+		"ListNames must NOT inherit List's silent-skip; the status surface needs the broken row")
+}
+
+func TestStore_ListAndListNamesAgreeWhenAllServicesLoadCleanly(t *testing.T) {
+	store, _ := newStore(t)
+	ctx := context.Background()
+	a := newServiceFixture()
+	b := newServiceFixture()
+	b.Config.Name, b.Secrets.Name = "bar", "bar"
+	require.NoError(t, store.Save(ctx, a))
+	require.NoError(t, store.Save(ctx, b))
+
+	names, err := store.ListNames(ctx)
+	require.NoError(t, err)
+	services, err := store.List(ctx)
+	require.NoError(t, err)
+
+	loadedNames := make([]string, 0, len(services))
+	for _, s := range services {
+		loadedNames = append(loadedNames, s.Config.Name)
+	}
+	assert.ElementsMatch(t, names, loadedNames,
+		"when every service loads cleanly, List and ListNames must agree on the set")
+}
+
 func TestStore_SaveSetsCorrectFilePermissions(t *testing.T) {
 	store, paths := newStore(t)
 	require.NoError(t, store.Save(context.Background(), newServiceFixture()))

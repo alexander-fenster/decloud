@@ -69,6 +69,11 @@ type Status struct {
 	State          string
 	LastDeployID   string
 	LastDeployedAt time.Time
+	// ErrorDetail carries the wrapped error message when StatusAll could
+	// not produce a real row for this service (State == "error"). Empty
+	// for the single-service Status() path and for non-error multi-row
+	// entries. NOT rendered in stdout; the CLI prints it to stderr.
+	ErrorDetail string
 }
 
 type LogOptions struct {
@@ -101,6 +106,7 @@ type Lifecycle interface {
 	Stop(ctx context.Context, name string) error
 	Restart(ctx context.Context, name string) error
 	Status(ctx context.Context, name string) (Status, error)
+	StatusAll(ctx context.Context) ([]Status, error)
 	Logs(ctx context.Context, name string, opts LogOptions) error
 	CaddyReload(ctx context.Context) error
 }

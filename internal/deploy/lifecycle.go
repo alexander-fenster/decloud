@@ -117,6 +117,46 @@ func (d *serviceDeployer) Status(ctx context.Context, name string) (Status, erro
 	}, nil
 }
 
+// StatusAll returns one Status per registered service, sorted by name.
+//
+// Per-service failures (Load fails after the name was listed, Inspect
+// fails) are absorbed into the result: the row is synthesised with
+// State="error" and ErrorDetail set to the wrapped error text. The
+// listing itself does not abort — an operator running `decloud status`
+// to see what is on the host must get every service's row even when
+// one is broken.
+//
+// A service that disappears between ListNames and Load (Load returns
+// ErrNotFound) is dropped from the result rather than synthesised as
+// an error: by the time the operator reads the output the row would
+// be misleading.
+//
+// Host-level failures (ListNames fails) abort and return the wrapped
+// error.
+func (d *serviceDeployer) StatusAll(ctx context.Context) ([]Status, error) {
+	names, err := d.deps.Store.ListNames(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing services: %w", err)
+	}
+	out := make([]Status, 0, len(names))
+	for _, name := range names {
+		st, err := d.Status(ctx, name)
+		if err != nil {
+			if errors.Is(err, registry.ErrNotFound) {
+				continue
+			}
+			out = append(out, Status{
+				Name:        name,
+				State:       "error",
+				ErrorDetail: err.Error(),
+			})
+			continue
+		}
+		out = append(out, st)
+	}
+	return out, nil
+}
+
 func (d *serviceDeployer) Logs(ctx context.Context, name string, opts LogOptions) error {
 	containerName := ids.ContainerName(name)
 	err := d.deps.Driver.Logs(ctx, containerName, dockerdrv.LogsOptions{

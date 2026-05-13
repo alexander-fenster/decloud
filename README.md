@@ -101,7 +101,7 @@ For the full procedure (firewall, ACME rate limits, migrating from earlier insta
 
 - `decloud deploy service` — build a Docker image from a source dir, run it on the shared `decloud` network, route Caddy to it, persist the registration.
 - `decloud start | stop | restart <name>` — lifecycle controls. `start` re-runs the container from the saved image+env; `restart` is stop-then-start; neither rebuilds.
-- `decloud status <name>` — runtime + registry state on one line.
+- `decloud status [name]` — runtime + registry state. With a name, one line for that service; without, an aligned table with one row per registered service.
 - `decloud logs <name> [-f] [--tail N]` — pass-through to `docker logs`.
 - `decloud unregister <name>` — remove the container, both registry files, and the Caddy route.
 - `decloud caddy up | down | reload` — bring the `decloud-caddy` container up on the shared `decloud` network, take it down, or regenerate the Caddyfile from the registry and reload.
