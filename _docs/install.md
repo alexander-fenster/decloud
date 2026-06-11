@@ -38,7 +38,7 @@ decloud caddy up
 
 1. Ensures the `decloud` Docker network exists.
 2. Writes a stub `Caddyfile` if one is missing.
-3. Pulls `caddy:2` and runs `decloud-caddy` with dual-stack publishing on `80/tcp`, `443/tcp`, and `443/udp` (HTTP/3 over QUIC), bind-mounting `/opt/decloud/config/caddy` read-only at `/etc/caddy`.
+3. Pulls `caddy:2` and runs `decloud-caddy` with dual-stack publishing on `80/tcp`, `443/tcp`, and `443/udp` (the `443/udp` port is published but **inert** — HTTP/3 is disabled, so Caddy serves only HTTP/1.1 and HTTP/2), bind-mounting `/opt/decloud/config/caddy` read-only at `/etc/caddy`.
 4. Persists ACME state and runtime config in two named volumes: `decloud_caddy_data` (`/data` — issued certs and OCSP staples) and `decloud_caddy_config` (`/config`).
 
 Re-running `decloud caddy up` is safe: it logs `caddy already running` and exits 0.
@@ -53,7 +53,7 @@ Volumes are **not** deleted by `caddy down`. To wipe ACME state, `docker volume 
 
 ### 3.1 Host firewall
 
-Open `80/tcp`, `443/tcp`, and `443/udp` (HTTP/3) on any host firewall (`ufw`, `firewalld`, cloud security group). Without UDP/443 the listener still works for HTTP/1.1 and HTTP/2, but mobile clients that negotiate HTTP/3 silently fall back and the symptom looks like "TLS works but my phone is slow."
+Open `80/tcp` and `443/tcp` on any host firewall (`ufw`, `firewalld`, cloud security group). Decloud also publishes `443/udp`, but **HTTP/3 (QUIC) is disabled** — Caddy advertises only HTTP/1.1 and HTTP/2 (`servers { protocols h1 h2 }` in the generated Caddyfile). UDP/443 is therefore **published but inert**: nothing listens on it once HTTP/3 is off, so opening it on the firewall is optional and harmless. HTTP/3 was disabled deliberately because iPhone Safari over QUIC/UDP-443 was breaking connectivity in the field; see `_ai/decisions/caddy-runs-in-container.md`.
 
 ### 3.2 Migrating from the M1.0 host-Caddy install
 

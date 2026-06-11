@@ -52,6 +52,22 @@ The pattern across these: any solution that keeps Caddy on the host either reint
 - **`caddy:2` floats.** Operators who pin a tag retag locally as the workaround until M3's config file lands. Documented in `_docs/install.md`.
 - **Concurrent deploys (theoretical, M2+).** Two simultaneous deploys writing `Caddyfile.tmp`, validating, renaming, then both reloading is `last-rename-wins`. Caddy handles back-to-back reloads correctly. M1 is single-operator; flag if multi-operator becomes plausible.
 
+## Amendment 2026-06-10 — HTTP/3 disabled (line-17 premise field-disproven)
+
+Originating task: `_tasks/2026-06-11-caddy-disable-http3/`.
+
+The line-17 reasoning above — that UDP/443 HTTP/3 is a mobile *benefit*, and without it "TLS works but my phone is slow" — was **reversed by field experience**. In this operator's environment, iPhone Safari negotiating HTTP/3 over QUIC/UDP-443 *broke* connectivity: broken QUIC with a slow or absent TCP fallback presents as "my phone hangs," not "my phone is slow." The original reasoning is preserved above for history; this amendment records that its premise no longer holds.
+
+**What changed:** HTTP/3 is now **disabled at the Caddyfile level**. `internal/caddy/generator.go` emits a global options block `{ servers { protocols h1 h2 } }` at the top of the generated Caddyfile, so Caddy advertises and serves only HTTP/1.1 and HTTP/2 — never HTTP/3. No `Alt-Svc: h3` header is sent, so clients are never offered QUIC in the first place.
+
+**UDP/443 stays published but inert.** `manager.go` `runOpts()` is unchanged — the six dual-stack `-p` entries (including `0.0.0.0:443/udp` and `[::]:443/udp`) are still published. With HTTP/3 off, nothing inside the container listens on UDP/443; packets arrive at a closed in-container port (harmless). Unpublishing the UDP/443 maps is a **deferred, separate change** — it requires a `decloud caddy up` container recreate (not the cheap `caddy reload` this fix rides on) and touches the dual-stack publishing consequence above. Not done in this task.
+
+**For the next engineer:** do NOT "fix a mobile regression" by turning HTTP/3 back on. It was disabled deliberately, on purpose, because it broke a real client. If UDP/443 should be closed for firewall-surface reasons, that is a follow-up task, not a re-enable.
+
+**Forward-looking (M3):** when M3 introduces Viper/TOML, the protocol set becomes a natural config knob (e.g. `caddy.protocols = ["h1", "h2"]`), with `h1 h2` as the hardcoded default. Note this as a future item only — there is no user-facing protocol flag in M1/M2; the set is hardcoded in the generator.
+
+**How-it-works companion:** the mechanics of the global-options block, the `Alt-Svc`-gated-on-listener behavior, the global-block-must-be-first rule, and the spaces-not-tabs indentation gotcha live in `_ai/caddyfile-generator-facts.md`. Read that before editing `internal/caddy/generator.go`.
+
 ## Forward-looking notes
 
 - **M4 admin API.** Blue/green via Caddy's admin API needs the admin endpoint published inside the `decloud` network only (or via Unix socket on a shared volume). Either way the container model already in place is what M4 will reuse — there is no "containerise Caddy at M4" task.

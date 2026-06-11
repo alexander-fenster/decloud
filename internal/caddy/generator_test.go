@@ -78,9 +78,31 @@ func TestGenerator_DropsZeroHostnameServices(t *testing.T) {
 	assert.NotContains(t, body, "decloud-hidden")
 }
 
-func TestGenerator_EmptyInputProducesHeaderOnly(t *testing.T) {
+func TestGenerator_DisablesHTTP3(t *testing.T) {
+	out := generateToTemp(t, []*registry.Service{
+		makeService("foo", 8080, "foo.example.com"),
+	})
+	body := readFile(t, out)
+
+	assert.Contains(t, body, "servers {")
+	assert.Contains(t, body, "protocols h1 h2\n", "protocols line must advertise exactly h1 h2")
+	assert.NotContains(t, body, "protocols h1 h2 h3", "h3 must not be on the protocols line")
+	assert.NotContains(t, body, "h1 h2 h3", "no h3 anywhere on the protocols directive")
+
+	assert.Contains(t, body, "\n    servers {\n", "servers block must be indented 4 spaces")
+	assert.Contains(t, body, "\n        protocols h1 h2\n", "protocols directive must be indented 8 spaces")
+
+	protoIdx := strings.Index(body, "protocols h1 h2")
+	siteIdx := strings.Index(body, "foo.example.com {")
+	require.GreaterOrEqual(t, protoIdx, 0)
+	require.GreaterOrEqual(t, siteIdx, 0)
+	assert.Less(t, protoIdx, siteIdx, "global options block must precede site blocks")
+}
+
+func TestGenerator_EmptyInputProducesHeaderAndGlobalBlock(t *testing.T) {
 	out := generateToTemp(t, nil)
 	body := readFile(t, out)
 	assert.NotContains(t, body, "reverse_proxy")
 	assert.NotEmpty(t, strings.TrimSpace(body), "output should at least carry a header comment")
+	assert.Contains(t, body, "protocols h1 h2", "empty registry still carries the global options block")
 }
