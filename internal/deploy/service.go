@@ -156,11 +156,11 @@ func (d *serviceDeployer) Deploy(ctx context.Context, req Request) error {
 	deployID := ids.NewDeployID()
 	logger := slog.With("deploy_id", deployID, "service", req.Name)
 
-	if err := d.deps.Driver.NetworkEnsure(ctx, "decloud"); err != nil {
+	if err := d.deps.Driver.NetworkEnsure(ctx, caddy.NetworkName); err != nil {
 		logger.Error("network ensure failed", "step", "network", "error", err)
 		return fmt.Errorf("%w: ensuring decloud network: %w", ErrRun, err)
 	}
-	logger.Info("network ensured", "step", "network", "network", "decloud")
+	logger.Info("network ensured", "step", "network", "network", caddy.NetworkName)
 
 	envFile := req.EnvFile
 	var captured map[string]string
@@ -251,7 +251,7 @@ func (d *serviceDeployer) Deploy(ctx context.Context, req Request) error {
 		Name:    containerName,
 		Service: req.Name,
 		Image:   imageRef,
-		Network: "decloud",
+		Network: caddy.NetworkName,
 		Env:     captured,
 		Restart: "unless-stopped",
 		Port:    req.Port,
@@ -321,7 +321,7 @@ func (d *serviceDeployer) Deploy(ctx context.Context, req Request) error {
 			Source:        registry.SourceSpec{Dir: req.SourceDir},
 			Build:         registry.BuildSpec{Dockerfile: req.Dockerfile, ImageRef: imageRef},
 			Run: registry.RunSpec{
-				Network: "decloud",
+				Network: caddy.NetworkName,
 				Port:    req.Port,
 				Restart: "unless-stopped",
 				Mounts:  req.Mounts,
@@ -384,7 +384,7 @@ func (d *serviceDeployer) restoreOldContainer(cleanupCtx context.Context, prev *
 		Name:    ids.ContainerName(prev.Config.Name),
 		Service: prev.Config.Name,
 		Image:   prev.Config.Build.ImageRef,
-		Network: "decloud",
+		Network: caddy.NetworkName,
 		Env:     prev.Secrets.Env,
 		Restart: prev.Config.Run.Restart,
 		Port:    prev.Config.Run.Port,

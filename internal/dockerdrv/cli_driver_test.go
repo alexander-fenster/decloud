@@ -198,7 +198,7 @@ func TestCLIDriver_LogsArgsFollow(t *testing.T) {
 }
 
 // docker network inspect decloud  -> exit 1 (absent)
-// docker network create decloud  (creates with default bridge driver)
+// docker network create --ipv6 --subnet fd00:dec0:11d::/64 decloud
 func TestCLIDriver_NetworkEnsureWhenAbsent(t *testing.T) {
 	var records []recordedCmd
 	d := driverWith(scriptedFactory(&records, "if [ \"$2\" = inspect ]; then exit 1; else exit 0; fi"))
@@ -212,6 +212,15 @@ func TestCLIDriver_NetworkEnsureWhenAbsent(t *testing.T) {
 		assert.NotEqual(t, "--driver", arg,
 			"network ensure must NOT pass --driver (default bridge required by readiness probe)")
 	}
+
+	assert.Contains(t, createCall.Args, "--ipv6",
+		"fresh network must be created with --ipv6 for container IPv6 egress")
+
+	subnetIdx := indexOf(createCall.Args, "--subnet")
+	require.GreaterOrEqual(t, subnetIdx, 0, "--subnet must be present on create")
+	require.Less(t, subnetIdx+1, len(createCall.Args), "--subnet must have a value")
+	assert.Equal(t, decloudIPv6Subnet, createCall.Args[subnetIdx+1],
+		"--subnet value must be the decloud ULA const")
 }
 
 // docker network inspect decloud  -> exit 0 (already present, no-op)

@@ -173,12 +173,25 @@ func (d *cliDriver) Logs(ctx context.Context, name string, opts LogsOptions) err
 	return nil
 }
 
+// decloudIPv6Subnet is the fixed ULA (/64, RFC 4193) the decloud bridge is
+// created with. NAT66/masquerade hides it behind the host's global address, so
+// the exact prefix is an internal driver detail, not an operator knob.
+const decloudIPv6Subnet = "fd00:dec0:11d::/64"
+
+// NetworkEnsure creates the decloud bridge with IPv6 (ULA + NAT66 egress) on a
+// fresh install. An already-existing network is left untouched — there is no
+// docker command to toggle EnableIPv6, and recreating in the deploy path would
+// be destructive, so upgrading an old IPv4-only network is done out-of-band.
 func (d *cliDriver) NetworkEnsure(ctx context.Context, name string) error {
 	if err := d.cmd(ctx, "docker", "network", "inspect", name).Run(); err == nil {
 		return nil
 	}
-	if err := d.cmd(ctx, "docker", "network", "create", name).Run(); err != nil {
-		return fmt.Errorf("docker network create: %w", err)
+	var stderr bytes.Buffer
+	cmd := d.cmd(ctx, "docker", "network", "create",
+		"--ipv6", "--subnet", decloudIPv6Subnet, name)
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker network create: %w; stderr=%q", err, stderr.String())
 	}
 	return nil
 }

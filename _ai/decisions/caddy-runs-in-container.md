@@ -68,6 +68,22 @@ The line-17 reasoning above — that UDP/443 HTTP/3 is a mobile *benefit*, and w
 
 **How-it-works companion:** the mechanics of the global-options block, the `Alt-Svc`-gated-on-listener behavior, the global-block-must-be-first rule, and the spaces-not-tabs indentation gotcha live in `_ai/caddyfile-generator-facts.md`. Read that before editing `internal/caddy/generator.go`.
 
+## Amendment 2026-06-24 — `decloud` network created IPv6-enabled on fresh installs
+
+Originating task: `_tasks/2026-06-24-docker-network-ipv6/`.
+
+**The change.** `(*cliDriver).NetworkEnsure` (`internal/dockerdrv/cli_driver.go`) now creates the `decloud` bridge with `docker network create --ipv6 --subnet fd00:dec0:11d::/64 <name>` instead of a bare `docker network create <name>`. The ULA value is the unexported package const `decloudIPv6Subnet`. Containers on the network get an IPv6 address; outbound IPv6 works via NAT66/masquerade behind the host's global IPv6 address, on hosts where Docker's `ip6tables` is on (default in Docker 27+). This is **egress only** — inbound still terminates at Caddy on the host; the ULA range is routed nowhere off-host.
+
+**No IPv4 `--subnet`, no `--driver`.** Only the IPv6 `--subnet` is pinned. Docker still auto-allocates the IPv4 subnet from its default pool, so `ContainerIP`'s read of `.NetworkSettings.Networks.decloud.IPAddress` (the IPv4 field) is unchanged and the readiness probe is unaffected. No `--driver` — the default bridge is required by both the readiness probe and the `WhenAbsent` test.
+
+**Deliberately NOT a reconcile.** Scope was narrowed by the user (2026-06-24): clean installs only. `NetworkEnsure` keeps its `docker network inspect` early-return byte-for-byte — an already-existing network is a strict no-op and is **not** auto-upgraded. The gotcha that makes auto-upgrade non-trivial and the reason it was intentionally skipped: **Docker has no command to toggle `EnableIPv6` on an existing network.** Upgrading would mean a destructive `docker network rm` + recreate in the deploy hot path, with Caddy and every service container attached. The operator does that out-of-band during a maintenance window instead (recipe in `_docs/install.md` §3.3). Do NOT add an `EnableIPv6` inspection / rm+recreate path back without an explicit decision — it was considered and cut.
+
+**Subnet is fixed, not a config knob.** `decloudIPv6Subnet` is an unexported const in `dockerdrv`, not in `internal/registry` or `internal/config`. Because the address is masqueraded it never appears off-host; threading it through the `NetworkEnsure(ctx, name)` signature, both call sites, and the registry would churn the interface for zero operator benefit and real footgun potential (a bad subnet breaks every fresh install).
+
+**Companion cleanup.** `internal/deploy/service.go` replaced its two `"decloud"` string literals (the `NetworkEnsure` arg and the `network ensured` log field) with `caddy.NetworkName` — value-identical (`"decloud"`), cycle-free (`deploy` already imports `caddy`; `caddy` does not import `deploy`), pure consolidation onto the single source of truth.
+
+**Operator-facing docs.** `_docs/install.md` §3.3 (the network + IPv6 section) and its troubleshooting entry "Container IPv6 egress does not work," plus the network-creation step in `_docs/usage.md` §5. Docs state plainly that existing networks are NOT auto-upgraded.
+
 ## Forward-looking notes
 
 - **M4 admin API.** Blue/green via Caddy's admin API needs the admin endpoint published inside the `decloud` network only (or via Unix socket on a shared volume). Either way the container model already in place is what M4 will reuse — there is no "containerise Caddy at M4" task.

@@ -36,7 +36,7 @@ decloud caddy up
 
 `caddy up` is idempotent. It:
 
-1. Ensures the `decloud` Docker network exists.
+1. Ensures the `decloud` Docker network exists. On a fresh install (the network does not yet exist), Decloud creates it IPv6-enabled — see [§3.3](#33-the-decloud-network-and-ipv6).
 2. Writes a stub `Caddyfile` if one is missing.
 3. Pulls `caddy:2` and runs `decloud-caddy` with dual-stack publishing on `80/tcp`, `443/tcp`, and `443/udp` (the `443/udp` port is published but **inert** — HTTP/3 is disabled, so Caddy serves only HTTP/1.1 and HTTP/2), bind-mounting `/opt/decloud/config/caddy` read-only at `/etc/caddy`.
 4. Persists ACME state and runtime config in two named volumes: `decloud_caddy_data` (`/data` — issued certs and OCSP staples) and `decloud_caddy_config` (`/config`).
@@ -93,6 +93,33 @@ Be aware of Let's Encrypt rate limits — they bite when you migrate many hostna
 - The recovery window for the per-domain weekly cap is **7 days**. If you trip it, your TLS is broken until next week.
 
 When in doubt, copy the volume.
+
+### 3.3 The `decloud` network and IPv6
+
+Every Decloud-managed container — `decloud-caddy` and each `decloud-<service>` — runs on a single shared Docker bridge network named `decloud`. Decloud creates this network the first time it is needed (during `decloud caddy up` or a deploy, whichever runs first on a fresh host).
+
+On a **fresh install** — when the `decloud` network does not yet exist — Decloud creates it with IPv6 enabled, using the private ULA subnet `fd00:dec0:11d::/64` (a fixed, internal address range per [RFC 4193](https://www.rfc-editor.org/rfc/rfc4193)). Containers on the network get an IPv6 address in addition to their usual IPv4 address. Outbound IPv6 (egress) works via NAT66/masquerade: Docker hides the private ULA address behind the host's own global IPv6 address, the same way container IPv4 egress is masqueraded behind the host's IPv4 address. This lets a service container reach IPv6-only external hosts (for example, `curl -6 https://…`).
+
+The IPv6 subnet is fixed and not configurable. It is an internal detail of how the bridge is built — because it is masqueraded, the exact prefix never appears outside the host. The IPv4 subnet is still auto-allocated by Docker from its default pool, exactly as before, so nothing about IPv4 addressing or the readiness probe (which reads the container's IPv4 bridge address) changes.
+
+This affects **egress only**. There is no inbound IPv6 reachability to containers: external traffic still terminates at Caddy on the host (dual-stack on `80`/`443`, see [§3](#3-bring-up-caddy)), and Caddy reverse-proxies to each upstream over the internal network by container name. The ULA range is routed nowhere off-host.
+
+**Host prerequisites for container IPv6 egress:**
+
+- The host itself must have working IPv6 egress (a global IPv6 address with a working default route). The container's traffic is masqueraded behind it.
+- Docker's `ip6tables` must be enabled so Docker installs the NAT66/masquerade rules. This is the default in Docker 27 and newer. If it is disabled, the network is still created IPv6-enabled but containers will not have working IPv6 egress.
+
+**Already-existing networks are not changed.** If a `decloud` network already exists (for example, it was created by an older Decloud build that did not enable IPv6), Decloud leaves it exactly as it is — `decloud caddy up` and deploys are a no-op against an existing network and never recreate it. Decloud does **not** auto-upgrade an IPv4-only network to IPv6. Docker has no command to toggle IPv6 on an existing network, and recreating it during a deploy would be destructive (Caddy and every service container are attached to it).
+
+To upgrade an existing IPv4-only `decloud` network to IPv6, the operator does it manually and out-of-band, during a maintenance window. The shape of the operation is: take Caddy down, remove the network, and let Decloud recreate it on the next `caddy up`:
+
+```sh
+decloud caddy down           # detaches decloud-caddy from the network
+docker network rm decloud    # removes the IPv4-only network (fails if endpoints remain)
+decloud caddy up             # recreates the network IPv6-enabled, restarts Caddy
+```
+
+Because `docker network rm` refuses to remove a network that still has attached containers, stop every running service container first (`decloud stop <name>` for each), or expect to restart them afterward. Plan this as a brief outage: while the network is gone, no service is reachable. Verify the result with `docker network inspect decloud` — `EnableIPv6` should read `true` and the `fd00:dec0:11d::/64` subnet should appear alongside the auto-allocated IPv4 subnet.
 
 ## 4. Create the `/opt/decloud/` tree
 
@@ -209,6 +236,14 @@ docker network inspect decloud
 ### Caddy is not routing after a deploy
 
 Exit 60 with text `service is registered and running but Caddy is not routing traffic; run 'decloud caddy up'` means the deploy wrote the registry and the container is healthy, but Caddy is down. Run `decloud caddy up`, then `decloud caddy reload` if the up command reports `caddy already running`.
+
+### Container IPv6 egress does not work
+
+If a service container cannot reach IPv6-only external hosts (for example `curl -6` fails from inside the container), check, in order:
+
+1. **The host has working IPv6 egress.** Confirm from the host itself with `curl -6 https://…` or `ping6`. Container egress is masqueraded behind the host's global IPv6 address; if the host has none, containers cannot reach IPv6.
+2. **The network is actually IPv6-enabled.** Run `docker network inspect decloud` and confirm `EnableIPv6` is `true` and the `fd00:dec0:11d::/64` subnet is present. If it reads `false`, the network predates IPv6 support and was left untouched — upgrade it out-of-band as described in [§3.3](#33-the-decloud-network-and-ipv6).
+3. **Docker's `ip6tables` is enabled** so Docker installs the NAT66/masquerade rules. It is on by default in Docker 27 and newer. Without it, the container has an IPv6 address but no egress.
 
 ## 8. License
 

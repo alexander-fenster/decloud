@@ -124,6 +124,18 @@ Five items punted out of M1 with explicit Don/Linus sign-off. Each was a non-blo
 
 **Originator:** Don §6 of `_tasks/2026-05-12-journald-log-driver/02-plan.md`; Joel §10.9 of `_tasks/2026-05-12-journald-log-driver/03-tech-plan.md`. Acknowledged at task ship time as deferred follow-up.
 
+## 13. Redeploy rollback ignores the persisted network field
+
+**Where:** `internal/deploy/service.go:387` — `restoreOldContainer`'s rollback `RunRequest` hardcodes `Network: caddy.NetworkName` while every sibling field in the same struct reads from the persisted `prev.Config.*` (`Image: prev.Config.Build.ImageRef`, `Restart: prev.Config.Run.Restart`, `Port: prev.Config.Run.Port`, …). The persisted `prev.Config.Run.Network` (written at `service.go:324`) is therefore IGNORED on rollback. The deploy-path write site at `:324` has the same asymmetry: it persists `caddy.NetworkName` rather than reflecting a per-service choice.
+
+**Why it's currently harmless:** there is exactly one global Docker network, so the const and the persisted value are always byte-identical (`"decloud"`). Behavior-neutral today; a latent inconsistency that only bites if a service is ever attached to a non-default network.
+
+**Why deferred:** explicitly out of scope for the IPv6 task — swapping the literal to `caddy.NetworkName` (pure consolidation onto the single source of truth) is value-identical and correct for that task's goal. Whether redeploy should instead HONOR `prev.Config.Run.Network` is a separate semantic decision with its own design surface (what does per-service network even mean, and who validates it).
+
+**Fix shape:** if/when per-service networks become a thing, change `:387` to `Network: prev.Config.Run.Network` and audit `:324` to persist the request's actual network rather than the const. Until then, leave it — do NOT "fix" it by reading the persisted field while the const is the only possible value; that just hides the design question.
+
+**Originator:** Don §"Scope boundary I am drawing (for the record, NOT this task)" in `_tasks/2026-06-24-docker-network-ipv6/002-plan.md`. Agreed by Linus in `008-linus-impl-review.md` ("Don's OUT OF SCOPE ruling is right, and I agree").
+
 ---
 
 ## Maintenance note

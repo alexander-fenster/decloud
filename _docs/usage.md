@@ -157,7 +157,7 @@ The `env.sh` model. The script is sourced inside a hermetic `bash` invocation; w
 
 What the deploy actually does, in order:
 
-0. Ensure the `decloud` Docker network exists. Missing networks are created on the fly; failures here surface as exit 40.
+0. Ensure the `decloud` Docker network exists. Missing networks are created on the fly — on a fresh host this network is created IPv6-enabled (see [`install.md` §3.3](./install.md#33-the-decloud-network-and-ipv6)); an already-existing network is left untouched. Failures here surface as exit 40.
 1. Capture the environment from `env.sh` (skipped if no env script is in play).
 2. Build the image with `docker build`.
 3. Stop and remove any previous container for this service. On a fresh deploy (no registry entry), inspect any container that already happens to be named `decloud-<name>`: if it carries the `decloud.service=<name>` label, treat it as an orphan from a prior interrupted deploy and remove it; if the label is missing or mismatched, refuse with exit 40 (see [§8](#8-interrupting-a-deploy-ctrlc)).
