@@ -60,6 +60,9 @@ type Request struct {
 	ReadinessPath    string
 	ReadinessTimeout time.Duration
 	Strategy         string
+	// DisableCompression is the CLI's --no-compression flag: same knob, two
+	// idiomatic names. Persisted as ServiceConfig.DisableCompression.
+	DisableCompression bool
 }
 
 type Status struct {
@@ -314,6 +317,9 @@ func (d *serviceDeployer) Deploy(ctx context.Context, req Request) error {
 	for _, h := range req.Hosts {
 		routes = append(routes, registry.Route{Hostname: h})
 	}
+	if hasPrev && prev.Config.DisableCompression && !req.DisableCompression {
+		logger.Warn("compression re-enabled: previous deploy set disable_compression; pass --no-compression to keep it off")
+	}
 	svc := &registry.Service{
 		Config: registry.ServiceConfig{
 			SchemaVersion: registry.CurrentSchemaVersion,
@@ -326,9 +332,10 @@ func (d *serviceDeployer) Deploy(ctx context.Context, req Request) error {
 				Restart: "unless-stopped",
 				Mounts:  req.Mounts,
 			},
-			Routes:    routes,
-			Strategy:  req.Strategy,
-			Readiness: spec,
+			Routes:             routes,
+			Strategy:           req.Strategy,
+			DisableCompression: req.DisableCompression,
+			Readiness:          spec,
 			State: registry.ServiceState{
 				LastDeployID:  deployID,
 				ContainerName: containerName,

@@ -42,6 +42,7 @@ type deployServiceFlags struct {
 	ReadinessTimeout time.Duration
 	Strategy         string
 	Dockerfile       string
+	NoCompression    bool
 }
 
 func newDeployServiceCmd(rc *rootContext) *cobra.Command {
@@ -64,6 +65,8 @@ func newDeployServiceCmd(rc *rootContext) *cobra.Command {
 	cmd.Flags().DurationVar(&f.ReadinessTimeout, "readiness-timeout", 60*time.Second, "total readiness wait")
 	cmd.Flags().StringVar(&f.Strategy, "strategy", "recreate", "deploy strategy (M1: recreate only)")
 	cmd.Flags().StringVar(&f.Dockerfile, "dockerfile", "Dockerfile", "Dockerfile path relative to <source-dir>")
+	cmd.Flags().BoolVar(&f.NoCompression, "no-compression", false,
+		"disable HTTP response compression (Caddy `encode`) for this service; set this for streaming/SSE backends")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }
@@ -96,16 +99,17 @@ func runDeployService(ctx context.Context, rc *rootContext, f *deployServiceFlag
 	}
 	paths := config.NewPaths(rc.ConfigRoot)
 	req := deploy.Request{
-		Name:             f.Name,
-		SourceDir:        abs,
-		Dockerfile:       dockerfile,
-		Hosts:            f.Hosts,
-		Port:             f.Port,
-		EnvFile:          envFile,
-		Mounts:           mounts,
-		ReadinessPath:    f.ReadinessPath,
-		ReadinessTimeout: f.ReadinessTimeout,
-		Strategy:         f.Strategy,
+		Name:               f.Name,
+		SourceDir:          abs,
+		Dockerfile:         dockerfile,
+		Hosts:              f.Hosts,
+		Port:               f.Port,
+		EnvFile:            envFile,
+		Mounts:             mounts,
+		ReadinessPath:      f.ReadinessPath,
+		ReadinessTimeout:   f.ReadinessTimeout,
+		Strategy:           f.Strategy,
+		DisableCompression: f.NoCompression,
 	}
 	d, err := deployerFactory(paths)
 	if err != nil {

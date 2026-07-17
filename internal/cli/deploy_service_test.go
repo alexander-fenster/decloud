@@ -69,6 +69,27 @@ func TestDeployService_BuildsExpectedRequest(t *testing.T) {
 		"source dir must be resolved (got %q)", got.SourceDir)
 	assert.Equal(t, "", got.EnvFile,
 		"no env.sh present at /srv/foo and no --env-file flag: EnvFile must be empty")
+	assert.False(t, got.DisableCompression, "compression is on by default")
+}
+
+func TestDeployService_NoCompressionFlagSetsRequest(t *testing.T) {
+	mock := installMockDeployer(t)
+	var got deploy.Request
+	mock.EXPECT().Deploy(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, req deploy.Request) error {
+			got = req
+			return nil
+		})
+
+	_, _, err := runRoot(t,
+		"deploy", "service",
+		"--name", "foo",
+		"--port", "8080",
+		"--no-compression",
+		"/srv/foo",
+	)
+	require.NoError(t, err)
+	assert.True(t, got.DisableCompression)
 }
 
 func TestDeployService_MissingNameReturnsExitUsageError(t *testing.T) {

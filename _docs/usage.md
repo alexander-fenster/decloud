@@ -69,6 +69,7 @@ decloud deploy service [flags] <source-dir>
 | `--strategy` | string | `recreate` | no | Only `recreate` is accepted in M1. `blue_green` is rejected with exit 10 (M4). |
 | `--dockerfile` | string | `Dockerfile` | no | Path to the Dockerfile. Relative paths resolve under `<source-dir>` regardless of the cwd you invoke `decloud` from. Absolute paths are used as-is. |
 | `--mount` | string (repeatable) | none | no | Persistent volume; `<host-path>:<container-path>[:ro]` (bind) or `<name>:<container-path>[:ro]` (named volume); repeatable. Bind sources must be absolute paths starting with `/`; named-volume sources must match `[a-zA-Z0-9][a-zA-Z0-9_.-]+`. The container path must be absolute. Default is read-write; only `:ro` is accepted as a mode flag (`:rw`, `:z`, `:Z`, `:cached`, `:delegated` are rejected). Two `--mount` flags targeting the same container path are rejected at parse time with exit 2; a hand-edited TOML carrying the same shape is rejected at load time with exit 10. |
+| `--no-compression` | bool | `false` | no | Omits Caddy's `encode` directive from this service's site blocks. Compression is **on by default**: every generated site block carries `encode zstd gzip` unless you pass this. Set it for streaming/SSE backends — an open Caddy defect ([#6293](https://github.com/caddyserver/caddy/issues/6293)) makes `encode` swallow a backend's pre-body flush, so a service that writes response headers and then idles before its first event leaves the client waiting for the stream to open. **Not sticky:** like `--mount`, the flag is read from the command line on every deploy, so omitting it on a later `decloud deploy service` turns compression back on for the service — the deploy logs a `WARN` when it does. Persisted as `disable_compression` in the service TOML. |
 | `--config-root` | string | `$DECLOUD_ROOT` or `/opt/decloud` | no | Root directory of the Decloud tree. Persistent flag, applies to every subcommand. Logs are written to `<config-root>/logs/decloud.log` (the flag controls log placement as well as registry/Caddy paths). |
 
 Bind-mount source paths are not pre-checked. If you pass `--mount /missing-path:/data` and `/missing-path` does not exist on the host, the deploy fails at the `docker run` step with a Docker daemon error referencing the path (typical text: `error while creating mount source path '/missing-path': mkdir ...`), exit 40. To verify before deploying:
@@ -149,6 +150,26 @@ read_only      = true
 
 The `host_path` field carries either an absolute host path (bind mount) or a Docker named-volume name (any value not starting with `/`). The on-disk schema stays at `schema_version = 1`; M1 reserved this shape and M2 populates it without touching the file format. Edit the TOML by hand at your own risk — the loader runs the same validation as `--mount` and rejects malformed entries with exit 10.
 
+**Hand-edited values do not survive the next deploy.** `decloud deploy service` rebuilds the entire `ServiceConfig` from the command line it was given and overwrites the file; it never merges what is already on disk. A value you set by hand does survive `decloud caddy reload` — that command regenerates the Caddyfile *from* these files — but the next deploy replaces it with whatever the flags say. For most keys that replacement is silent. The one exception is `disable_compression = true` (the on-disk form of `--no-compression`), which the deploy warns about when it resets it, because a streaming backend that quietly regains compression is the exact failure that key exists to prevent.
+
+That key is also a good illustration of why hand-editing is riskier than it looks. `disable_compression` is a **top-level** key, so it must sit above the first `[table]` header — TOML binds a bare key to whatever table precedes it, so appending it to the end of the file makes it `state.disable_compression`, which the strict loader rejects at load time with `unknown field in TOML` and exit 10:
+
+```toml
+# /opt/decloud/config/services/myservice.toml
+schema_version = 1
+name = "myservice"
+strategy = "recreate"
+disable_compression = true   # correct: above the first [table] header
+
+[source]
+dir = "/srv/myservice"
+# ...
+# appending disable_compression = true down HERE instead binds it to the
+# last table and fails the next load with exit 10
+```
+
+The durable way to keep compression off is to pass `--no-compression` on every `decloud deploy service` for that service. Treat the TOML as something to read, not something to configure with.
+
 The `env.sh` model. The script is sourced inside a hermetic `bash` invocation; whatever it `export`s ends up in the container's environment, never baked into the image. Arbitrary shell is allowed — computed values, conditional exports, subshell calls. The script is re-evaluated only at deploy time, so restarts are fast and reproducible. Borderline cases worth knowing:
 
 - `set +a` in the script disables auto-export; variables exported before it are captured, those after are not.
@@ -164,7 +185,7 @@ What the deploy actually does, in order:
 4. Run the new container on the `decloud` network. Every Decloud-managed container (services and `decloud-caddy` both) is started with `--log-driver=journald --log-opt tag=decloud/<service>`, so logs survive container redeployment in the host journal. `decloud logs` keeps working unchanged because the journald driver supports `docker logs` natively; cross-redeploy history is queryable on the host with `journalctl CONTAINER_TAG=decloud/<service>` (see [§4](#4-lifecycle-commands) and [§6](#6-debugging-a-container-directly)).
 5. Wait for `GET <readiness-path>` to return `200 OK` from the host (probing the container's bridge IP directly; ports are not published to the host).
 6. Persist the service registration to `/opt/decloud/config/services/<name>.toml` and `/opt/decloud/secrets/<name>/env.toml`.
-7. Regenerate the Caddyfile, `docker exec decloud-caddy caddy validate` against a temporary file, atomically rename it into place, and `docker exec decloud-caddy caddy reload`. Requires `decloud caddy up` to have been run; if `decloud-caddy` is not running, the deploy exits 60 with a recovery hint pointing at `decloud caddy up`.
+7. Regenerate the Caddyfile, `docker exec decloud-caddy caddy validate` against a temporary file, atomically rename it into place, and `docker exec decloud-caddy caddy reload`. Every site block the generator emits carries `encode zstd gzip` — one per hostname — unless the service was deployed with `--no-compression`. Requires `decloud caddy up` to have been run; if `decloud-caddy` is not running, the deploy exits 60 with a recovery hint pointing at `decloud caddy up`.
 
 If any step fails, the deploy aborts, surfaces a non-zero exit code, and does what it can to leave the system in a coherent state. `caddy validate` runs before the rename, so a syntactically broken Caddyfile cannot reach disk; the previous Caddyfile is preserved and Caddy keeps serving.
 
@@ -196,6 +217,8 @@ All M1 commands listed below. Each takes `--config-root` as the only persistent 
 - `decloud caddy up` — bring up the `decloud-caddy` container on the shared `decloud` network with dual-stack publishing on `80/tcp`, `443/tcp`, `443/udp` (`443/udp` is published but inert — HTTP/3 is disabled; Caddy advertises only HTTP/1.1 and HTTP/2). Idempotent: re-running while Caddy is already up logs `caddy already running` and exits 0. Pulls `caddy:2` on first run; uses named volumes `decloud_caddy_data` (ACME state, issued certs) and `decloud_caddy_config` (runtime config). Takes no flags — image and ports are fixed in M1. Run once after install; the container has `--restart=unless-stopped`, so reboots and Docker daemon restarts bring it back automatically.
 - `decloud caddy down` — stop and remove the `decloud-caddy` container with a 10-second grace period. The named volumes `decloud_caddy_data` and `decloud_caddy_config` are **not** removed — wipe them with `docker volume rm` if you need a clean ACME slate. Idempotent on an already-absent container.
 - `decloud caddy reload` — regenerate the Caddyfile from the registry, validate it inside the running `decloud-caddy` container via `docker exec caddy validate`, atomic-rename it into place, and `docker exec caddy reload`. Use this if you edited something out of band and need Caddy back in sync with the registry. Surface unchanged from M1.0; the implementation now `docker exec`s into the container instead of shelling a host `caddy` binary, so `decloud caddy up` must have been run first. **Warning:** this regenerates from registry state and discards any manual edits to `/opt/decloud/config/caddy/Caddyfile`. Edit the registry, not the Caddyfile.
+
+  **Upgrade note — this command turns compression on for every existing service.** The Caddyfile is regenerated from registry state, and site blocks now carry `encode zstd gzip` by default, so the first `decloud caddy reload` after upgrading to a build that emits `encode` enables compression for **every registered service** — including ones deployed long before the flag existed. Service TOMLs written by older builds have no `disable_compression` key at all, and an absent key reads as `false`, which means compression on. This is intended: for HTML, JSON, CSS, and JS backends it is the setting you want, and it costs nothing to get. But it *is* a live change to services that were running fine yesterday. If a service streams (SSE, long-poll, chunked progress) and it starts hanging on stream open after a reload, that is this change: redeploy it with `decloud deploy service --no-compression`. There is no `--no-compression` on `decloud caddy reload` itself — the setting lives in the registry, and only a deploy writes the registry.
 
 ### Status format
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"reflect"
 	"testing"
@@ -1043,4 +1044,101 @@ func TestDeploy_RestoreOldContainerPassesVolumesToDriver(t *testing.T) {
 		"rollback must re-apply prev.Config.Run.Mounts so the recreate strategy preserves volumes")
 	assert.Equal(t, "foo", rollbackSvc,
 		"rollback RunRequest.Service must equal prev.Config.Name so the restored container shares the journald tag")
+}
+
+// expectHappyPathDeploy installs the standard happy-path expectations around a
+// caller-supplied Load result. Passing a nil prev makes it a first deploy
+// (ErrNotFound, no stop/remove of a previous container).
+func expectHappyPathDeploy(h *deployerHarness, prev *registry.Service) {
+	h.driver.EXPECT().NetworkEnsure(gomock.Any(), "decloud").Return(nil)
+	h.capturer.EXPECT().Capture(gomock.Any(), gomock.Any()).Return(map[string]string{"X": "1"}, nil)
+	if prev == nil {
+		h.store.EXPECT().Load(gomock.Any(), "foo").Return(nil, registry.ErrNotFound)
+	} else {
+		h.store.EXPECT().Load(gomock.Any(), "foo").Return(prev, nil)
+		h.driver.EXPECT().Stop(gomock.Any(), "decloud-foo", gomock.Any()).Return(nil)
+		h.driver.EXPECT().Remove(gomock.Any(), "decloud-foo").Return(nil)
+	}
+	h.driver.EXPECT().Build(gomock.Any(), gomock.Any()).Return("img-id", nil)
+	h.driver.EXPECT().Run(gomock.Any(), gomock.Any()).Return("cid", nil)
+	h.driver.EXPECT().ContainerIP(gomock.Any(), gomock.Any()).Return("172.18.0.5", nil)
+	h.store.EXPECT().List(gomock.Any()).Return(nil, nil)
+	h.generator.EXPECT().Generate(gomock.Any(), gomock.Any()).DoAndReturn(stubGenerate)
+	h.reloader.EXPECT().Validate(gomock.Any(), gomock.Any()).Return(nil)
+	h.reloader.EXPECT().Reload(gomock.Any(), gomock.Any()).Return(nil)
+}
+
+// captureDeployLogs redirects the default slog logger — which Deploy derives
+// its logger from — into a buffer for the duration of t. slog.SetDefault is
+// process-global, so no test using this may call t.Parallel().
+func captureDeployLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+func TestDeploy_PersistsDisableCompression(t *testing.T) {
+	h := newDeployerHarness(t)
+	var saved *registry.Service
+
+	expectHappyPathDeploy(h, nil)
+	h.store.EXPECT().Save(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, svc *registry.Service) error {
+			saved = svc
+			return nil
+		})
+
+	req := newRequest()
+	req.DisableCompression = true
+	require.NoError(t, h.deployer.Deploy(context.Background(), req))
+
+	require.NotNil(t, saved)
+	assert.True(t, saved.Config.DisableCompression,
+		"Request.DisableCompression must reach the persisted config; the generator reads it from there")
+}
+
+func TestDeploy_WarnsWhenCompressionReEnabledOnRedeploy(t *testing.T) {
+	cases := []struct {
+		name              string
+		prevDisabled      bool
+		hasPrev           bool
+		requestedDisabled bool
+		wantWarning       bool
+	}{
+		{"reset_without_flag", true, true, false, true},
+		{"flag_passed_again", true, true, true, false},
+		{"first_deploy_has_no_previous_config", false, false, false, false},
+		{"ordinary_redeploy_never_disabled", false, true, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newDeployerHarness(t)
+			logs := captureDeployLogs(t)
+
+			var prev *registry.Service
+			if tc.hasPrev {
+				prev = newPrev()
+				prev.Config.DisableCompression = tc.prevDisabled
+			}
+			expectHappyPathDeploy(h, prev)
+			h.store.EXPECT().Save(gomock.Any(), gomock.Any()).Return(nil)
+
+			req := newRequest()
+			req.DisableCompression = tc.requestedDisabled
+			require.NoError(t, h.deployer.Deploy(context.Background(), req))
+
+			if tc.wantWarning {
+				assert.Contains(t, logs.String(), "--no-compression",
+					"the warning must name the flag that keeps compression off")
+				assert.Contains(t, logs.String(), "disable_compression",
+					"the warning must name the key the operator sees in the TOML")
+				return
+			}
+			assert.NotContains(t, logs.String(), "--no-compression",
+				"a warning nobody can act on is trained-to-ignore within a week")
+		})
+	}
 }

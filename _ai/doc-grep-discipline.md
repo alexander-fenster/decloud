@@ -42,6 +42,37 @@ The same discipline applies when `_docs/*.md` quotes a slog message that operato
 
 Recipe: when changing a slog `Warn`/`Error`/`Info` message string, immediately `grep -F "<old phrase>" _docs/` and update every hit in the same diff. Don't trust the production-side change alone.
 
+## The other half: label what you could NOT verify
+
+The rule above governs claims you *can* check against the tree. For claims sourced from outside it —
+upstream library internals, version floors, anything a senior handed you — the norm is: **a relayed
+claim must be labelled as relayed, with the relayer named.**
+
+Raymond's standing caveat in the compression task is the template: *"anything in this record cited to
+`encode.go` line numbers is upstream reading (Don's, Linus's, or Kevlin's), not mine"*, and inline,
+*"the zstd browser-version floors are relayed from Don §2.6, not verified by me."* Kevlin: **"that
+self-flag is the only reason a wrong claim about upstream did not become permanent"** — he went
+straight to the labelled part and found the error there (`init()` is called from two sites, not one).
+An unlabelled relay is indistinguishable from a verified claim, so reviewers spend their attention
+uniformly; a labelled one aims them.
+
+## A doc writer's job is accuracy, not obedience
+
+Raymond was handed explicit instructions by two seniors, checked them against the code, found them
+false, and **shipped the truth instead of the instruction.** Both planners had written that a
+`disable_compression` reset happens "silently"; Don's own later ruling had made it warn, and neither he
+nor Joel nor Linus caught the contradiction across two plan revisions and two re-reads. Don's
+assessment: *"the most junior surface on this task has the best accuracy record on it, because he
+checked what he was handed and labelled what he couldn't check."* His shipped wording was also better
+than the plan's.
+
+Both of Raymond's saves on that task came from **checking instructions rather than executing them**. If
+a plan tells you to document X and the code does not do X, the plan is the thing that's wrong.
+
 ## Originator
+
+`_tasks/2026-07-17-caddy-http-compression/{008-raymond-docs.md §8.4 + §B4, 010-kevlin-review.md
+(process notes), 009-linus-code-review.md §1, 002-don-plan.md §10.2 + §10.4}` — relayed-claim
+labelling and accuracy-over-obedience.
 
 `_tasks/2026-04-27-caddy-container-connection-refused/011-kevlin-review.md` (cycle-1 catch), `017-raymond-docs-cycle2.md` (cycle-2 fix), `018-linus-impl-review-cycle2.md` §4 (post-fix verification with the literal `grep -F` recipe above). Slog-message extension: `_tasks/2026-04-28-deploy-cleanup-on-interrupt/03-tech-plan.md` §13.8 + `20-linus-impl-review-iter2.md`.

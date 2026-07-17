@@ -144,6 +144,30 @@ func TestStore_RoundTripsLastDeployedAt(t *testing.T) {
 		"want %s got %s", svc.Config.LastDeployedAt, loaded.Config.LastDeployedAt)
 }
 
+func TestStore_RoundTripsDisableCompression(t *testing.T) {
+	store, _ := newStore(t)
+	svc := newServiceFixture()
+	svc.Config.DisableCompression = true
+
+	require.NoError(t, store.Save(context.Background(), svc))
+
+	loaded, err := store.Load(context.Background(), "foo")
+	require.NoError(t, err,
+		"the strict decoder must accept the disable_compression key Save just wrote")
+	assert.True(t, loaded.Config.DisableCompression)
+}
+
+func TestStore_LoadDefaultsDisableCompressionToFalse(t *testing.T) {
+	store, paths := newStore(t)
+	writeConfigFile(t, paths, "foo", validConfigTOML)
+	writeSecretsFile(t, paths, "foo", validSecretsTOML, 0o700, 0o600)
+
+	loaded, err := store.Load(context.Background(), "foo")
+	require.NoError(t, err)
+	assert.False(t, loaded.Config.DisableCompression,
+		"every service TOML already on disk lacks the key and must gain compression, not lose it")
+}
+
 func TestStore_LoadRejectsUnknownConfigField(t *testing.T) {
 	store, paths := newStore(t)
 	body := validConfigTOML + "\nbogus_extra_field = 42\n"

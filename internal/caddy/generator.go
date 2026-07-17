@@ -14,10 +14,11 @@ import (
 
 // GeneratorInput is one row in the rendered Caddyfile.
 type GeneratorInput struct {
-	ServiceName   string
-	ContainerName string
-	Port          int
-	Hostnames     []string
+	ServiceName        string
+	ContainerName      string
+	Port               int
+	Hostnames          []string
+	DisableCompression bool
 }
 
 // Generator renders a Caddyfile from a slice of registered services.
@@ -47,6 +48,9 @@ func (g *textGenerator) Generate(outPath string, services []*registry.Service) e
 		fmt.Fprintln(&buf)
 		for _, host := range in.Hostnames {
 			fmt.Fprintf(&buf, "%s {\n", host)
+			if !in.DisableCompression {
+				fmt.Fprintln(&buf, "    encode zstd gzip")
+			}
 			fmt.Fprintf(&buf, "    reverse_proxy %s:%d\n", in.ContainerName, in.Port)
 			fmt.Fprintln(&buf, "}")
 		}
@@ -73,10 +77,11 @@ func normalize(services []*registry.Service) []GeneratorInput {
 			container = "decloud-" + svc.Config.Name
 		}
 		out = append(out, GeneratorInput{
-			ServiceName:   svc.Config.Name,
-			ContainerName: container,
-			Port:          svc.Config.Run.Port,
-			Hostnames:     hosts,
+			ServiceName:        svc.Config.Name,
+			ContainerName:      container,
+			Port:               svc.Config.Run.Port,
+			Hostnames:          hosts,
+			DisableCompression: svc.Config.DisableCompression,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ServiceName < out[j].ServiceName })

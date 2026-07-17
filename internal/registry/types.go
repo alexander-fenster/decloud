@@ -10,11 +10,23 @@ type ServiceConfig struct {
 	SchemaVersion int    `toml:"schema_version"`
 	Name          string `toml:"name"`
 
-	Source    SourceSpec    `toml:"source"`
-	Build     BuildSpec     `toml:"build"`
-	Run       RunSpec       `toml:"run"`
-	Routes    []Route       `toml:"routes"`
-	Strategy  string        `toml:"strategy"`
+	Source   SourceSpec `toml:"source"`
+	Build    BuildSpec  `toml:"build"`
+	Run      RunSpec    `toml:"run"`
+	Routes   []Route    `toml:"routes"`
+	Strategy string     `toml:"strategy"`
+
+	// DisableCompression omits Caddy's `encode` directive from this service's
+	// site blocks. Absent/false = compression ON (the default). Set it for
+	// streaming (headers-then-idle) backends: Caddy installs its encoding
+	// responseWriter on the request's Accept-Encoding alone, so a pre-body
+	// Flush() is swallowed and an idle-first event stream hangs — see
+	// caddyserver/caddy#6293. The `match` sub-directive cannot prevent this;
+	// only omitting `encode` can. Backward-compatible TOML addition (cf.
+	// LastDeployedAt below): existing files without the key unmarshal to
+	// false and gain compression. Bool polarity mirrors Mount.ReadOnly.
+	DisableCompression bool `toml:"disable_compression"`
+
 	Readiness ReadinessSpec `toml:"readiness"`
 
 	State ServiceState `toml:"state"`
