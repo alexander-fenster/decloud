@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/alexander-fenster/decloud/internal/dockerdrv"
@@ -52,7 +54,7 @@ func (p *httpProbe) Wait(ctx context.Context, containerName string, spec registr
 		case ip == "":
 			lastErr = dockerdrv.ErrNoBridgeIP
 		default:
-			url := fmt.Sprintf("http://%s:%d%s", ip, port, spec.HTTPPath)
+			url := fmt.Sprintf("http://%s%s", net.JoinHostPort(ip, strconv.Itoa(port)), spec.HTTPPath)
 			if err := p.probeOnce(ctx, url); err != nil {
 				lastErr = err
 			} else {
@@ -74,11 +76,21 @@ func (p *httpProbe) Wait(ctx context.Context, containerName string, spec registr
 }
 
 func (p *httpProbe) probeOnce(ctx context.Context, url string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	reqCtx := ctx
+	var cancel context.CancelFunc
+	if p.client.Timeout > 0 {
+		reqCtx, cancel = context.WithTimeout(ctx, p.client.Timeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := p.client.Do(req)
+	transport := p.client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	resp, err := transport.RoundTrip(req)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -210,6 +211,9 @@ func (d *cliDriver) ContainerIP(ctx context.Context, name string) (string, error
 	}
 	ip := strings.TrimSpace(stdout.String())
 	if ip == "" {
+		return "", ErrNoBridgeIP
+	}
+	if net.ParseIP(ip) == nil {
 		return "", ErrNoBridgeIP
 	}
 	return ip, nil

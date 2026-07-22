@@ -3,6 +3,7 @@ package deploy_test
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -51,6 +52,42 @@ func newProbeDriver(t *testing.T) *dockermocks.MockDriver {
 func TestReadiness_HTTPSuccessReturnsNil(t *testing.T) {
 	host, port := startTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
+	})
+	driver := newProbeDriver(t)
+	driver.EXPECT().ContainerIP(gomock.Any(), probeContainerName).Return(host, nil).AnyTimes()
+
+	probe := deploy.NewHTTPProbe(driver)
+	require.NoError(t, probe.Wait(context.Background(), probeContainerName, newReadinessSpec(), port))
+}
+
+func TestReadiness_HTTPSuccessWithIPv6HostReturnsNil(t *testing.T) {
+	listener, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	srv.Listener = listener
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	_, portText, err := net.SplitHostPort(listener.Addr().String())
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+
+	driver := newProbeDriver(t)
+	driver.EXPECT().ContainerIP(gomock.Any(), probeContainerName).Return("::1", nil).AnyTimes()
+
+	probe := deploy.NewHTTPProbe(driver)
+	require.NoError(t, probe.Wait(context.Background(), probeContainerName, newReadinessSpec(), port))
+}
+
+func TestReadiness_RedirectWithMalformedLocationCountsAsReady(t *testing.T) {
+	host, port := startTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "http://invalid IP:8080/healthz")
+		w.WriteHeader(http.StatusFound)
 	})
 	driver := newProbeDriver(t)
 	driver.EXPECT().ContainerIP(gomock.Any(), probeContainerName).Return(host, nil).AnyTimes()

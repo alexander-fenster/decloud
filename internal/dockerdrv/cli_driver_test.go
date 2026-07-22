@@ -261,6 +261,13 @@ func TestCLIDriver_ContainerIPEmptyReturnsErrNoBridgeIP(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrNoBridgeIP))
 }
 
+func TestCLIDriver_ContainerIPInvalidStringReturnsErrNoBridgeIP(t *testing.T) {
+	d := driverWith(scriptedFactory(&[]recordedCmd{}, "echo 'invalid IP'"))
+	_, err := d.ContainerIP(context.Background(), "decloud-foo")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNoBridgeIP))
+}
+
 func TestCLIDriver_ContainerIPNotFoundReturnsErrContainerNotFound(t *testing.T) {
 	d := driverWith(scriptedFactory(&[]recordedCmd{},
 		`echo "Error: No such object: decloud-foo" 1>&2; exit 1`))
